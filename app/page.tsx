@@ -554,6 +554,9 @@ function OneTapApp() {
   const [showAllFields, setShowAllFields] = useState(false);
 
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const scanCounterRef = useRef<number>(1);
+  const activeScanIdRef = useRef<number>(0);
+  const activeAbortControllerRef = useRef<AbortController | null>(null);
 
   // Robustly bind MediaStream to HTMLVideoElement and ensure playback
   const bindStreamToVideo = React.useCallback((video: HTMLVideoElement | null, stream: MediaStream | null) => {
@@ -778,13 +781,14 @@ function OneTapApp() {
         throw new Error("Could not initialize canvas context.");
       }
 
+      // Draw the video frame directly to canvas in its normal (unmirrored) orientation
       ctx.drawImage(video, 0, 0, width, height);
       const base64Data = canvas.toDataURL("image/jpeg", 0.88);
 
       // Stop camera hardware immediately
       stopCameraStream();
 
-      // Launch automated analysis pipeline immediately
+      // Launch automated analysis pipeline immediately in normal orientation
       processBase64Image(base64Data);
     } catch (err) {
       console.error("Frame capture error:", err);
@@ -794,8 +798,22 @@ function OneTapApp() {
     }
   }
 
-  // Core Analysis Engine
+  // Core Analysis Engine with Stale-Scan Protection
   async function processBase64Image(base64: string) {
+    scanCounterRef.current += 1;
+    const scanId = scanCounterRef.current;
+    activeScanIdRef.current = scanId;
+
+    if (activeAbortControllerRef.current) {
+      try {
+        activeAbortControllerRef.current.abort();
+      } catch {
+        // Ignore
+      }
+    }
+    const controller = new AbortController();
+    activeAbortControllerRef.current = controller;
+
     setStatus("loading");
     setLoadingStep("1. Capturing and optimizing frame...");
     setErrorMessage("");
@@ -806,15 +824,18 @@ function OneTapApp() {
 
     try {
       setLoadingStep("2. Understanding Scene Context...");
-      const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 40000);
 
       const stepTimer1 = setTimeout(() => {
-        setLoadingStep("3. Checking Evidence & Grounding...");
+        if (activeScanIdRef.current === scanId) {
+          setLoadingStep("3. Checking Evidence & Grounding...");
+        }
       }, 2000);
 
       const stepTimer2 = setTimeout(() => {
-        setLoadingStep("4. Preparing Verified Actions...");
+        if (activeScanIdRef.current === scanId) {
+          setLoadingStep("4. Preparing Verified Actions...");
+        }
       }, 4500);
 
       const response = await fetch("/api/analyze", {
@@ -828,7 +849,16 @@ function OneTapApp() {
       clearTimeout(stepTimer1);
       clearTimeout(stepTimer2);
 
+      // Ignore if user scanned again or reset while request was in flight
+      if (activeScanIdRef.current !== scanId) {
+        return;
+      }
+
       const data = await response.json().catch(() => null);
+
+      if (activeScanIdRef.current !== scanId) {
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(
@@ -848,10 +878,14 @@ function OneTapApp() {
       // Save to local history
       saveScanToHistory(validatedAnalysis, base64);
     } catch (err) {
+      if (activeScanIdRef.current !== scanId) {
+        // Silently discard aborted or superseded requests
+        return;
+      }
       console.error("Processing error:", err);
       setStatus("error");
       if (err instanceof Error && err.name === "AbortError") {
-        setErrorMessage("Request timed out. Please check your connection and try again.");
+        setErrorMessage("Request was cancelled or timed out. Please try again.");
       } else {
         setErrorMessage(
           err instanceof Error
@@ -1225,6 +1259,16 @@ function OneTapApp() {
   }
 
   function reset() {
+    scanCounterRef.current += 1;
+    activeScanIdRef.current = scanCounterRef.current;
+    if (activeAbortControllerRef.current) {
+      try {
+        activeAbortControllerRef.current.abort();
+      } catch {
+        // Ignore
+      }
+      activeAbortControllerRef.current = null;
+    }
     stopCameraStream();
     setStatus("idle");
     setImage(null);
@@ -1238,6 +1282,11 @@ function OneTapApp() {
     setChatMessages([]);
     setChatInput("");
     setShowAllFields(false);
+  }
+
+  function retakeScan() {
+    reset();
+    startRealCamera();
   }
 
   const getActionIcon = (type: ActionType) => {
@@ -1409,6 +1458,14 @@ function OneTapApp() {
             <div className="mt-4 flex gap-2">
               <button
                 type="button"
+                onClick={retakeScan}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-[var(--bg-pill)] hover:bg-[var(--bg-card-hover)] py-2.5 text-xs font-semibold text-[var(--text-primary)] transition"
+              >
+                <Camera size={13} />
+                <span>Retake</span>
+              </button>
+              <button
+                type="button"
                 onClick={reset}
                 className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-[var(--bg-pill)] hover:bg-[var(--bg-card-hover)] py-2.5 text-xs font-semibold text-[var(--text-primary)] transition"
               >
@@ -1421,7 +1478,7 @@ function OneTapApp() {
                 className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-[var(--btn-primary-bg)] text-[var(--btn-primary-text)] py-2.5 text-xs font-semibold hover:opacity-90 transition"
               >
                 <Upload size={13} />
-                <span>Upload File</span>
+                <span>Upload</span>
               </button>
             </div>
           </div>
@@ -1432,7 +1489,7 @@ function OneTapApp() {
           {/* LIVE CAMERA VIEWFINDER MODAL / VIEW */}
           {isCameraOpen && (
             <div className="relative aspect-[4/5] w-full overflow-hidden rounded-[2rem] border border-[var(--accent-emerald)] bg-black shadow-2xl flex flex-col justify-between p-4">
-              {/* Live Video Element */}
+              {/* Live Video Element (Horizontally Mirrored for User Preview Only) */}
               <video
                 ref={setVideoRef}
                 autoPlay
@@ -1446,7 +1503,8 @@ function OneTapApp() {
                   const v = e.currentTarget;
                   v.play().catch((err) => console.warn("Video onCanPlay play error:", err));
                 }}
-                className="absolute inset-0 h-full w-full object-cover z-0 pointer-events-none"
+                className="absolute inset-0 h-full w-full object-cover z-0 pointer-events-none -scale-x-100"
+                style={{ transform: "scaleX(-1)" }}
               />
 
               {/* Viewfinder Target Framing Overlay */}
@@ -1932,15 +1990,23 @@ function OneTapApp() {
                     </form>
                   </div>
 
-                  {/* Scan Another / Scan Something Else Button */}
-                  <div className="pt-2">
+                  {/* Scan Again & Retake Actions Bar */}
+                  <div className="pt-2 grid grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={retakeScan}
+                      className="flex items-center justify-center gap-2 rounded-2xl border border-[var(--border-medium)] bg-[var(--bg-card)] py-3.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] active:scale-[0.99] transition shadow-sm"
+                    >
+                      <Camera size={14} className="text-[var(--accent-emerald)]" />
+                      <span>Retake Photo</span>
+                    </button>
                     <button
                       type="button"
                       onClick={reset}
-                      className="w-full flex items-center justify-center gap-2 rounded-2xl border border-[var(--border-medium)] bg-[var(--bg-card)] py-3.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] active:scale-[0.99] transition shadow-sm"
+                      className="flex items-center justify-center gap-2 rounded-2xl border border-[var(--border-medium)] bg-[var(--bg-card)] py-3.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] active:scale-[0.99] transition shadow-sm"
                     >
-                      <Camera size={14} />
-                      <span>Scan something else</span>
+                      <RefreshCw size={14} />
+                      <span>Scan Again</span>
                     </button>
                   </div>
                 </div>
