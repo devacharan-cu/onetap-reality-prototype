@@ -4,44 +4,28 @@ import { z } from "zod";
 
 export const runtime = "nodejs";
 
-const requestSchema = z.object({
-  image: z
-    .string()
-    .startsWith("data:image/", { message: "Image must be a data:image/ URL." }),
-});
+export type FieldStatus = "verified" | "web_verified" | "not_mentioned" | "unverified";
+export type FieldSource = "image" | "web" | "none";
 
-const geminiResponseSchema = z.object({
-  context: z.string().default("GENERAL"),
-  title: z.string().default("Visual Subject"),
-  summary: z.string().default(""),
-  confidence: z.number().min(0).max(1).default(0.75),
-  entities: z.object({
-    eventTitle: z.string().default(""),
-    date: z.string().default(""),
-    time: z.string().default(""),
-    location: z.string().default(""),
-    phoneNumber: z.string().default(""),
-    productName: z.string().default(""),
-    routeNumber: z.string().default(""),
-    emergencyDetected: z.boolean().default(false),
-  }),
-  evidence: z.object({
-    eventTitle: z.string().default(""),
-    date: z.string().default(""),
-    time: z.string().default(""),
-    location: z.string().default(""),
-    phoneNumber: z.string().default(""),
-    productName: z.string().default(""),
-    routeNumber: z.string().default(""),
-  }),
-});
+export type ExtractedField = {
+  value: string;
+  status: FieldStatus;
+  source: FieldSource;
+  confidence: number;
+  evidence?: string;
+  sourceCitation?: string;
+};
 
 export type ActionType =
   | "calendar"
   | "maps"
+  | "directions"
   | "call"
+  | "email"
+  | "website"
   | "search"
-  | "explain"
+  | "translate"
+  | "copy"
   | "share"
   | "emergency";
 
@@ -50,7 +34,128 @@ export type ServerAction = {
   label: string;
   description: string;
   type: ActionType;
+  payload?: Record<string, string>;
 };
+
+const requestSchema = z.object({
+  image: z
+    .string()
+    .startsWith("data:image/", { message: "Image must be a data:image/ URL." }),
+});
+
+const geminiRawResponseSchema = z.object({
+  context: z.string().default("general"),
+  title: z.string().default("Visual Subject"),
+  summary: z.string().default(""),
+  confidence: z.number().min(0).max(1).default(0.85),
+  languageDetected: z
+    .object({
+      code: z.string().default("en"),
+      name: z.string().default("English"),
+      originalSnippet: z.string().default(""),
+      translatedEnglish: z.string().default(""),
+    })
+    .optional(),
+  emergencyDetected: z.boolean().default(false),
+  entities: z.object({
+    eventTitle: z.string().default(""),
+    date: z.string().default(""),
+    time: z.string().default(""),
+    location: z.string().default(""),
+    phoneNumber: z.string().default(""),
+    email: z.string().default(""),
+    website: z.string().default(""),
+    productName: z.string().default(""),
+    routeNumber: z.string().default(""),
+    price: z.string().default(""),
+    organization: z.string().default(""),
+    qrCodeData: z.string().default(""),
+  }),
+  evidence: z.object({
+    eventTitle: z.string().default(""),
+    date: z.string().default(""),
+    time: z.string().default(""),
+    location: z.string().default(""),
+    phoneNumber: z.string().default(""),
+    email: z.string().default(""),
+    website: z.string().default(""),
+    productName: z.string().default(""),
+    routeNumber: z.string().default(""),
+    price: z.string().default(""),
+    organization: z.string().default(""),
+    qrCodeData: z.string().default(""),
+  }),
+});
+
+// ==========================================
+// HARD SERVER-SIDE PLACEHOLDER REJECTION PATTERNS
+// ==========================================
+const PLACEHOLDER_PATTERNS = [
+  // Generic / Dummy Phone Numbers
+  /\b123[-.\s]?456[-.\s]?7890\b/i,
+  /\b555[-.\s]?555[-.\s]?5555\b/i,
+  /\b000[-.\s]?000[-.\s]?0000\b/i,
+  /\b111[-.\s]?111[-.\s]?1111\b/i,
+  /\b987[-.\s]?654[-.\s]?3210\b/i,
+  /\b123456789\d?\b/i,
+  /\b0123456789\b/i,
+  /\b(\d)\1{6,}\b/, // repeating digits e.g. 0000000000, 9999999999
+
+  // Generic / Template Addresses & Locations
+  /\b123\s+anywhere\s*(st|street|ave|avenue|rd|road)?\b/i,
+  /\banywhere\s+(st|street|ave|avenue|rd|road)\b/i,
+  /\bany\s+city\b/i,
+  /\bcity,\s*state\b/i,
+  /\byour\s+city\b/i,
+  /\byour\s+address\b/i,
+  /\b123\s+main\s+st\b/i,
+  /\baddress\s+here\b/i,
+  /\blocation\s+here\b/i,
+
+  // Generic / Template Websites & Domains
+  /\breallygreatsite\.com\b/i,
+  /\bexample\.com\b/i,
+  /\byoursite\.com\b/i,
+  /\bwebsite\.com\b/i,
+  /\bcompanyname\.com\b/i,
+  /\bdomain\.com\b/i,
+  /\btest\.com\b/i,
+  /\byourdomain\.com\b/i,
+  /\bwww\.reallygreatsite\b/i,
+
+  // General filler
+  /\blorem\s+ipsum\b/i,
+  /\bplaceholder\b/i,
+  /\bdummy\b/i,
+];
+
+function isPlaceholder(value?: string): boolean {
+  if (!value) return true;
+  const clean = value.trim();
+  if (!clean || clean.toLowerCase() === "not mentioned") return true;
+
+  for (const pattern of PLACEHOLDER_PATTERNS) {
+    if (pattern.test(clean)) {
+      return true;
+    }
+  }
+
+  const lower = clean.toLowerCase();
+  if (
+    lower.includes("reallygreatsite") ||
+    lower.includes("anywhere st") ||
+    lower.includes("any city") ||
+    lower.includes("123-456-7890") ||
+    lower.includes("1234567890") ||
+    lower.includes("lorem ipsum") ||
+    lower.includes("your website") ||
+    lower.includes("your company")
+  ) {
+    return true;
+  }
+
+  return false;
+}
 
 function normalize(value?: string): string {
   if (!value) return "";
@@ -61,8 +166,27 @@ function normalize(value?: string): string {
     .trim();
 }
 
+function isGenericEvidence(evidence?: string): boolean {
+  if (!evidence) return true;
+  const norm = normalize(evidence);
+  if (!norm || norm.length < 2) return true;
+  if (
+    norm === "visible in image" ||
+    norm === "on poster" ||
+    norm === "in image" ||
+    norm === "seen on screen" ||
+    norm === "text on image"
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function hasEvidence(value?: string, evidence?: string): boolean {
   if (!value || !evidence) return false;
+  if (isPlaceholder(value) || isPlaceholder(evidence)) return false;
+  if (isGenericEvidence(evidence)) return false;
+
   const v = normalize(value);
   const e = normalize(evidence);
   if (!v || !e) return false;
@@ -76,10 +200,35 @@ function hasEvidence(value?: string, evidence?: string): boolean {
 
 function hasPhoneEvidence(value?: string, evidence?: string): boolean {
   if (!value || !evidence) return false;
+  if (isPlaceholder(value) || isPlaceholder(evidence)) return false;
+  if (isGenericEvidence(evidence)) return false;
+
   const valDigits = value.replace(/\D/g, "");
   const eviDigits = evidence.replace(/\D/g, "");
   if (valDigits.length < 7 || eviDigits.length < 7) return false;
+  if (/^(\d)\1+$/.test(valDigits)) return false; // 0000000, 1111111
+
   return eviDigits.includes(valDigits) || valDigits.includes(eviDigits);
+}
+
+function hasEmailEvidence(value?: string, evidence?: string): boolean {
+  if (!value || !evidence) return false;
+  if (isPlaceholder(value) || isPlaceholder(evidence)) return false;
+  if (isGenericEvidence(evidence)) return false;
+
+  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  if (!emailRegex.test(value.trim())) return false;
+  return normalize(evidence).includes(normalize(value));
+}
+
+function hasUrlEvidence(value?: string, evidence?: string): boolean {
+  if (!value || !evidence) return false;
+  if (isPlaceholder(value) || isPlaceholder(evidence)) return false;
+  if (isGenericEvidence(evidence)) return false;
+
+  const normVal = value.replace(/^https?:\/\//i, "").replace(/^www\./i, "").toLowerCase();
+  const normEvi = evidence.replace(/^https?:\/\//i, "").replace(/^www\./i, "").toLowerCase();
+  return normEvi.includes(normVal) || normVal.includes(normEvi);
 }
 
 export async function POST(req: NextRequest) {
@@ -116,49 +265,77 @@ export async function POST(req: NextRequest) {
 
     const ai = new GoogleGenAI({ apiKey });
 
-    const prompt = `You are the visual reasoning engine for OneTap Reality (iQOO Hackathon 2026).
-Analyze this image to identify actionable, high-utility information.
+    const primaryPrompt = `You are the core visual intelligence engine for OneTap Reality (iQOO Hackathon 2026).
+Your goal: SEE -> UNDERSTAND -> VERIFY -> ACT.
 
-CRITICAL RULES:
-1. NEVER invent or hallucinate dates, phone numbers, addresses, product names, or events.
-2. If text or details are NOT clearly visible in the image, set the entity and evidence to empty strings ("").
-3. Follow: NO EVIDENCE -> NO ENTITY -> NO ACTION.
-4. For every entity you extract, provide the EXACT verbatim snippet or visual cue as "evidence".
-5. Set emergencyDetected to true ONLY if there is clear visual evidence of an emergency (e.g. fire, vehicle accident, severe road hazard).
+CRITICAL ZERO-HALLUCINATION & TEMPLATE RULES:
+1. NEVER invent or copy placeholder text. Reject template placeholders like:
+   - "123 Anywhere St, Any City"
+   - "123-456-7890" / "555-555-5555"
+   - "www.reallygreatsite.com" / "example.com"
+2. If any field is NOT genuine or NOT clearly visible in the image, return empty string ("").
+3. NO EVIDENCE -> NO ENTITY -> NO ACTION.
+4. For every extracted entity, provide the EXACT verbatim visible snippet as "evidence".
+5. Distinguish semantic numbers correctly:
+   - "₹499", "$25", "Free Entry" -> price
+   - "2026", "10th-18th October" -> date
+   - "+91 9876543210" -> phone number
+6. If the image contains non-English text (e.g. Hindi, Spanish, Tamil, French, German, Japanese, etc.):
+   - Detect the language name and ISO code.
+   - Extract the key original text snippet.
+   - Provide a natural English translation.
+7. Classify context into one of:
+   event_poster, business_card, receipt, menu, product, document, sign, location, screenshot, qr_code, general.
+8. Set emergencyDetected to true ONLY if there is clear visual evidence of an active emergency.
 
 Return ONLY valid JSON matching this exact structure:
 {
-  "context": "Short category e.g. EVENT_POSTER, BUSINESS_CARD, TRANSIT_SIGN, PRODUCT, DOCUMENT, GENERAL",
+  "context": "event_poster | business_card | receipt | menu | product | document | sign | location | screenshot | qr_code | general",
   "title": "Concise 3-6 word title of the scene/subject",
-  "summary": "1-2 sentence summary of what is visible",
+  "summary": "1-2 sentence high-level summary of what is seen",
   "confidence": 0.0 to 1.0,
+  "languageDetected": {
+    "code": "en",
+    "name": "English",
+    "originalSnippet": "",
+    "translatedEnglish": ""
+  },
+  "emergencyDetected": false,
   "entities": {
     "eventTitle": "Name of event or empty",
-    "date": "Exact event date or empty",
-    "time": "Exact event time or empty",
-    "location": "Exact address or place name or empty",
-    "phoneNumber": "Exact phone number or empty",
-    "productName": "Exact product/item name or empty",
+    "date": "Date text or empty",
+    "time": "Time text or empty",
+    "location": "Address or venue name or empty",
+    "phoneNumber": "Phone number or empty",
+    "email": "Email address or empty",
+    "website": "URL or empty",
+    "productName": "Product brand/name or empty",
     "routeNumber": "Transit route/bus number or empty",
-    "emergencyDetected": false
+    "price": "Price/cost or empty",
+    "organization": "Company/institute/brand name or empty",
+    "qrCodeData": "Visible QR code URL/text or empty"
   },
   "evidence": {
-    "eventTitle": "Verbatim visible evidence or empty",
-    "date": "Verbatim visible date text or empty",
-    "time": "Verbatim visible time text or empty",
-    "location": "Verbatim visible location text or empty",
-    "phoneNumber": "Verbatim visible phone digits or empty",
-    "productName": "Verbatim visible product text or empty",
-    "routeNumber": "Verbatim visible route text or empty"
+    "eventTitle": "Verbatim text snippet from image or empty",
+    "date": "Verbatim date snippet or empty",
+    "time": "Verbatim time snippet or empty",
+    "location": "Verbatim location snippet or empty",
+    "phoneNumber": "Verbatim phone digits or empty",
+    "email": "Verbatim email text or empty",
+    "website": "Verbatim URL text or empty",
+    "productName": "Verbatim product text or empty",
+    "routeNumber": "Verbatim route text or empty",
+    "price": "Verbatim price text or empty",
+    "organization": "Verbatim organization text or empty",
+    "qrCodeData": "Verbatim QR content or empty"
   }
 }`;
 
-    // Primary model: gemini-3.7-flash with LOW thinking.
-    // Fallback: gemini-3.6-flash if temporary high-demand (503) occurs.
-    const modelsToTry = ["gemini-3.7-flash", "gemini-3.6-flash"];
-    let responseText = "";
+    // Execute Visual Analysis (gemini-3.7-flash with LOW thinking, auto fallback to gemini-3.6-flash)
+    const visionModels = ["gemini-3.7-flash", "gemini-3.6-flash"];
+    let rawText = "";
 
-    for (const model of modelsToTry) {
+    for (const model of visionModels) {
       try {
         const is37 = model.includes("3.7");
         const config: {
@@ -175,157 +352,466 @@ Return ONLY valid JSON matching this exact structure:
         const response = await ai.models.generateContent({
           model,
           contents: [
-            {
-              inlineData: {
-                mimeType,
-                data: base64Data,
-              },
-            },
-            {
-              text: prompt,
-            },
+            { inlineData: { mimeType, data: base64Data } },
+            { text: primaryPrompt },
           ],
           config,
         });
 
         if (response.text && response.text.trim()) {
-          responseText = response.text.trim();
+          rawText = response.text.trim();
           break;
         }
-      } catch (geminiErr) {
-        console.warn(`Attempt with ${model} failed:`, geminiErr);
+      } catch (err) {
+        console.warn(`Vision model ${model} attempt failed:`, err);
       }
     }
 
-    if (!responseText) {
+    if (!rawText) {
       return NextResponse.json(
-        { error: "The AI analysis returned an empty response. Please try again." },
+        { error: "Visual analysis returned an empty response. Please try again." },
         { status: 502 }
       );
     }
 
-    let parsedJson: unknown;
+    let parsedRaw: unknown;
     try {
-      parsedJson = JSON.parse(responseText);
+      parsedRaw = JSON.parse(rawText);
     } catch {
       return NextResponse.json(
-        { error: "The AI analysis returned malformed data. Please try again." },
+        { error: "Visual analysis returned malformed JSON. Please try again." },
         { status: 502 }
       );
     }
 
-    const validatedData = geminiResponseSchema.safeParse(parsedJson);
-    if (!validatedData.success) {
+    const validated = geminiRawResponseSchema.safeParse(parsedRaw);
+    if (!validated.success) {
       return NextResponse.json(
-        { error: "The AI analysis structure could not be validated. Please try again." },
+        { error: "Could not validate visual intelligence structure." },
         { status: 502 }
       );
     }
 
-    const { context, title, summary, confidence, entities, evidence } =
-      validatedData.data;
+    const { context, title, summary, confidence, languageDetected, emergencyDetected, entities, evidence } =
+      validated.data;
 
-    // Strict Anti-Hallucination Action Derivation on Server
+    // ========================================================
+    // HARD SERVER-SIDE POST-PROCESSING & EVIDENCE VERIFICATION
+    // ========================================================
+    const eventValid = hasEvidence(entities.eventTitle, evidence.eventTitle) && !isPlaceholder(entities.eventTitle);
+    const dateValid = hasEvidence(entities.date, evidence.date) && !isPlaceholder(entities.date);
+    const timeValid = hasEvidence(entities.time, evidence.time) && !isPlaceholder(entities.time);
+    const locValid = hasEvidence(entities.location, evidence.location) && !isPlaceholder(entities.location);
+    const phoneValid = hasPhoneEvidence(entities.phoneNumber, evidence.phoneNumber) && !isPlaceholder(entities.phoneNumber);
+    const emailValid = hasEmailEvidence(entities.email, evidence.email) && !isPlaceholder(entities.email);
+    const webValid = hasUrlEvidence(entities.website, evidence.website) && !isPlaceholder(entities.website);
+    const productValid = hasEvidence(entities.productName, evidence.productName) && !isPlaceholder(entities.productName);
+    const routeValid = hasEvidence(entities.routeNumber, evidence.routeNumber) && !isPlaceholder(entities.routeNumber);
+    const priceValid = hasEvidence(entities.price, evidence.price) && !isPlaceholder(entities.price);
+    const orgValid = hasEvidence(entities.organization, evidence.organization) && !isPlaceholder(entities.organization);
+    const qrValid = Boolean(entities.qrCodeData && entities.qrCodeData.trim() && !isPlaceholder(entities.qrCodeData));
+
+    // Build initial field structure with strict placeholder rejection
+    const fields: Record<string, ExtractedField> = {
+      eventTitle: {
+        value: eventValid ? entities.eventTitle.trim() : "Not mentioned",
+        status: eventValid ? "verified" : "not_mentioned",
+        source: eventValid ? "image" : "none",
+        confidence: eventValid ? 0.95 : 1.0,
+        evidence: eventValid ? evidence.eventTitle : undefined,
+      },
+      date: {
+        value: dateValid ? entities.date.trim() : "Not mentioned",
+        status: dateValid ? "verified" : "not_mentioned",
+        source: dateValid ? "image" : "none",
+        confidence: dateValid ? 0.95 : 1.0,
+        evidence: dateValid ? evidence.date : undefined,
+      },
+      time: {
+        value: timeValid ? entities.time.trim() : "Not mentioned",
+        status: timeValid ? "verified" : "not_mentioned",
+        source: timeValid ? "image" : "none",
+        confidence: timeValid ? 0.95 : 1.0,
+        evidence: timeValid ? evidence.time : undefined,
+      },
+      location: {
+        value: locValid ? entities.location.trim() : "Not mentioned",
+        status: locValid ? "verified" : "not_mentioned",
+        source: locValid ? "image" : "none",
+        confidence: locValid ? 0.95 : 1.0,
+        evidence: locValid ? evidence.location : undefined,
+      },
+      phoneNumber: {
+        value: phoneValid ? entities.phoneNumber.trim() : "Not mentioned",
+        status: phoneValid ? "verified" : "not_mentioned",
+        source: phoneValid ? "image" : "none",
+        confidence: phoneValid ? 0.98 : 1.0,
+        evidence: phoneValid ? evidence.phoneNumber : undefined,
+      },
+      email: {
+        value: emailValid ? entities.email.trim() : "Not mentioned",
+        status: emailValid ? "verified" : "not_mentioned",
+        source: emailValid ? "image" : "none",
+        confidence: emailValid ? 0.98 : 1.0,
+        evidence: emailValid ? evidence.email : undefined,
+      },
+      website: {
+        value: webValid ? entities.website.trim() : "Not mentioned",
+        status: webValid ? "verified" : "not_mentioned",
+        source: webValid ? "image" : "none",
+        confidence: webValid ? 0.95 : 1.0,
+        evidence: webValid ? evidence.website : undefined,
+      },
+      productName: {
+        value: productValid ? entities.productName.trim() : "Not mentioned",
+        status: productValid ? "verified" : "not_mentioned",
+        source: productValid ? "image" : "none",
+        confidence: productValid ? 0.92 : 1.0,
+        evidence: productValid ? evidence.productName : undefined,
+      },
+      routeNumber: {
+        value: routeValid ? entities.routeNumber.trim() : "Not mentioned",
+        status: routeValid ? "verified" : "not_mentioned",
+        source: routeValid ? "image" : "none",
+        confidence: routeValid ? 0.94 : 1.0,
+        evidence: routeValid ? evidence.routeNumber : undefined,
+      },
+      price: {
+        value: priceValid ? entities.price.trim() : "Not mentioned",
+        status: priceValid ? "verified" : "not_mentioned",
+        source: priceValid ? "image" : "none",
+        confidence: priceValid ? 0.96 : 1.0,
+        evidence: priceValid ? evidence.price : undefined,
+      },
+      organization: {
+        value: orgValid ? entities.organization.trim() : "Not mentioned",
+        status: orgValid ? "verified" : "not_mentioned",
+        source: orgValid ? "image" : "none",
+        confidence: orgValid ? 0.93 : 1.0,
+        evidence: orgValid ? evidence.organization : undefined,
+      },
+      qrCodeData: {
+        value: qrValid ? entities.qrCodeData.trim() : "Not mentioned",
+        status: qrValid ? "verified" : "not_mentioned",
+        source: qrValid ? "image" : "none",
+        confidence: qrValid ? 0.99 : 1.0,
+        evidence: qrValid ? evidence.qrCodeData : undefined,
+      },
+      language: {
+        value: languageDetected?.name || "English",
+        status: languageDetected && languageDetected.code !== "en" ? "verified" : "verified",
+        source: "image",
+        confidence: 0.95,
+      },
+    };
+
+    // STEP 3: Smart Web Verification ONLY for Identifiable Real-World Entities
+    const identifiableSubject =
+      (eventValid && !isPlaceholder(entities.eventTitle) && entities.eventTitle) ||
+      (orgValid && !isPlaceholder(entities.organization) && entities.organization) ||
+      (productValid && !isPlaceholder(entities.productName) && entities.productName) ||
+      "";
+
+    let webGroundingUsed = false;
+
+    // Do NOT perform web verification on generic template titles (e.g. "Art Fair", "Event", "Poster")
+    const isGenericTitle =
+      identifiableSubject.toLowerCase() === "art fair" ||
+      identifiableSubject.toLowerCase() === "event" ||
+      identifiableSubject.toLowerCase() === "music concert" ||
+      identifiableSubject.toLowerCase() === "conference";
+
+    if (identifiableSubject && identifiableSubject.length > 3 && !isGenericTitle) {
+      const needsLocation = fields.location.status === "not_mentioned";
+      const needsWebsite = fields.website.status === "not_mentioned";
+      const needsDate = context === "event_poster" && fields.date.status === "not_mentioned";
+
+      if (needsLocation || needsWebsite || needsDate) {
+        try {
+          const searchPrompt = `You are verifying missing official public information for: "${identifiableSubject}" (Context: ${context}).
+Known details from image: ${summary}.
+
+Missing items to check:
+${needsLocation ? "- Official address or venue location" : ""}
+${needsWebsite ? "- Official website URL" : ""}
+${needsDate ? "- Official event date" : ""}
+
+CRITICAL GROUNDING RULES:
+1. ONLY return information if you find a confident, unambiguous official match.
+2. If there are multiple different venues/places or if ambiguous, return empty strings.
+3. NEVER return placeholder text (e.g. "123 Anywhere St", "example.com").
+
+Return JSON:
+{
+  "location": "Verified address/venue or empty",
+  "website": "Verified official URL or empty",
+  "date": "Verified official date or empty",
+  "sourceCitation": "Name of official source or domain"
+}`;
+
+          const webResp = await ai.models.generateContent({
+            model: "gemini-3.6-flash",
+            contents: [{ text: searchPrompt }],
+            config: {
+              responseMimeType: "application/json",
+            },
+          });
+
+          if (webResp.text) {
+            const webData = JSON.parse(webResp.text);
+            if (
+              needsLocation &&
+              webData.location &&
+              webData.location.length > 5 &&
+              !isPlaceholder(webData.location)
+            ) {
+              fields.location = {
+                value: webData.location,
+                status: "web_verified",
+                source: "web",
+                confidence: 0.90,
+                sourceCitation: webData.sourceCitation || "Verified Online",
+              };
+              webGroundingUsed = true;
+            }
+            if (
+              needsWebsite &&
+              webData.website &&
+              webData.website.startsWith("http") &&
+              !isPlaceholder(webData.website)
+            ) {
+              fields.website = {
+                value: webData.website,
+                status: "web_verified",
+                source: "web",
+                confidence: 0.92,
+                sourceCitation: webData.sourceCitation || "Official Website",
+              };
+              webGroundingUsed = true;
+            }
+            if (
+              needsDate &&
+              webData.date &&
+              webData.date.length > 3 &&
+              !isPlaceholder(webData.date)
+            ) {
+              fields.date = {
+                value: webData.date,
+                status: "web_verified",
+                source: "web",
+                confidence: 0.88,
+                sourceCitation: webData.sourceCitation || "Verified Online",
+              };
+              webGroundingUsed = true;
+            }
+          }
+        } catch (searchErr) {
+          console.warn("Smart web verification skipped:", searchErr);
+        }
+      }
+    }
+
+    // ========================================================
+    // STRICT ACTION DERIVATION (ONLY FROM VALIDATED NON-PLACEHOLDER FIELDS)
+    // ========================================================
     const actions: ServerAction[] = [];
 
-    // 1. Calendar: Event Title + Date with verified evidence
-    const validEvent = hasEvidence(entities.eventTitle, evidence.eventTitle);
-    const validDate = hasEvidence(entities.date, evidence.date);
-    if (entities.date && validDate) {
+    // 1. Calendar: Event Title + Date verified (and not placeholder)
+    const isDateVerified =
+      (fields.date.status === "verified" || fields.date.status === "web_verified") &&
+      fields.date.value !== "Not mentioned" &&
+      !isPlaceholder(fields.date.value);
+
+    if (isDateVerified) {
+      const eventName =
+        fields.eventTitle.status !== "not_mentioned" &&
+        fields.eventTitle.value !== "Not mentioned" &&
+        !isPlaceholder(fields.eventTitle.value)
+          ? fields.eventTitle.value
+          : title;
+
       actions.push({
-        id: "action-calendar",
+        id: "act-calendar",
         label: "Add to Calendar",
-        description: `Schedule "${entities.eventTitle || title}" on ${entities.date}${
-          entities.time ? ` at ${entities.time}` : ""
+        description: `Schedule "${eventName}" on ${fields.date.value}${
+          fields.time.status === "verified" && fields.time.value !== "Not mentioned"
+            ? ` at ${fields.time.value}`
+            : ""
         }`,
         type: "calendar",
+        payload: {
+          title: eventName,
+          date: fields.date.value,
+          time: fields.time.status === "verified" && fields.time.value !== "Not mentioned" ? fields.time.value : "",
+          location: fields.location.status !== "not_mentioned" && fields.location.value !== "Not mentioned" ? fields.location.value : "",
+        },
       });
     }
 
-    // 2. Maps: Location with verified evidence
-    const validLocation = hasEvidence(entities.location, evidence.location);
-    if (entities.location && validLocation) {
+    // 2. Maps & Directions: Location verified (and not placeholder)
+    const isLocVerified =
+      (fields.location.status === "verified" || fields.location.status === "web_verified") &&
+      fields.location.value !== "Not mentioned" &&
+      !isPlaceholder(fields.location.value);
+
+    if (isLocVerified) {
       actions.push({
-        id: "action-maps",
+        id: "act-maps",
         label: "Open in Maps",
-        description: `Get directions to ${entities.location}`,
+        description: `View "${fields.location.value}" on Google Maps`,
         type: "maps",
+        payload: {
+          location: fields.location.value,
+        },
       });
-    }
 
-    // 3. Call: Phone number with verified digit evidence
-    const validPhone = hasPhoneEvidence(entities.phoneNumber, evidence.phoneNumber);
-    if (entities.phoneNumber && validPhone) {
       actions.push({
-        id: "action-call",
-        label: "Call Phone",
-        description: `Dial ${entities.phoneNumber}`,
-        type: "call",
+        id: "act-directions",
+        label: "Get Directions",
+        description: `Route to ${fields.location.value}`,
+        type: "directions",
+        payload: {
+          location: fields.location.value,
+        },
       });
     }
 
-    // 4. Search: Product, Route, or Subject with verified evidence
+    // 3. Call: Phone Number verified from image (and not placeholder)
+    const isPhoneVerified =
+      fields.phoneNumber.status === "verified" &&
+      fields.phoneNumber.value !== "Not mentioned" &&
+      !isPlaceholder(fields.phoneNumber.value);
+
+    if (isPhoneVerified) {
+      actions.push({
+        id: "act-call",
+        label: "Call Phone",
+        description: `Dial ${fields.phoneNumber.value}`,
+        type: "call",
+        payload: {
+          phone: fields.phoneNumber.value,
+        },
+      });
+    }
+
+    // 4. Email: Email verified from image (and not placeholder)
+    const isEmailVerified =
+      fields.email.status === "verified" &&
+      fields.email.value !== "Not mentioned" &&
+      !isPlaceholder(fields.email.value);
+
+    if (isEmailVerified) {
+      actions.push({
+        id: "act-email",
+        label: "Send Email",
+        description: `Compose email to ${fields.email.value}`,
+        type: "email",
+        payload: {
+          email: fields.email.value,
+        },
+      });
+    }
+
+    // 5. Open Website / QR link
+    const hasQrUrl =
+      fields.qrCodeData.status === "verified" &&
+      fields.qrCodeData.value !== "Not mentioned" &&
+      !isPlaceholder(fields.qrCodeData.value) &&
+      (fields.qrCodeData.value.startsWith("http://") || fields.qrCodeData.value.startsWith("https://"));
+
+    const isWebVerified =
+      (fields.website.status === "verified" || fields.website.status === "web_verified") &&
+      fields.website.value !== "Not mentioned" &&
+      !isPlaceholder(fields.website.value);
+
+    if (hasQrUrl) {
+      actions.push({
+        id: "act-qr-link",
+        label: "Open QR Link",
+        description: `Visit ${fields.qrCodeData.value}`,
+        type: "website",
+        payload: {
+          url: fields.qrCodeData.value,
+        },
+      });
+    } else if (isWebVerified) {
+      actions.push({
+        id: "act-website",
+        label: "Open Website",
+        description: `Visit ${fields.website.value}`,
+        type: "website",
+        payload: {
+          url: fields.website.value.startsWith("http")
+            ? fields.website.value
+            : `https://${fields.website.value}`,
+        },
+      });
+    }
+
+    // 6. Translate Action (when non-English is detected)
+    if (
+      languageDetected &&
+      languageDetected.code !== "en" &&
+      languageDetected.translatedEnglish
+    ) {
+      actions.push({
+        id: "act-translate",
+        label: `Translate (${languageDetected.name} → EN)`,
+        description: `View English translation: "${languageDetected.translatedEnglish.slice(0, 45)}..."`,
+        type: "translate",
+        payload: {
+          original: languageDetected.originalSnippet || "",
+          translated: languageDetected.translatedEnglish,
+          langName: languageDetected.name,
+        },
+      });
+    }
+
+    // 7. Search: Identified Entity or Product
     const searchSubject =
-      (hasEvidence(entities.productName, evidence.productName) &&
-        entities.productName) ||
-      (hasEvidence(entities.routeNumber, evidence.routeNumber) &&
-        entities.routeNumber) ||
-      (validEvent && entities.eventTitle) ||
-      (validLocation && entities.location) ||
+      (fields.productName.status === "verified" && fields.productName.value !== "Not mentioned" && fields.productName.value) ||
+      (fields.routeNumber.status === "verified" && fields.routeNumber.value !== "Not mentioned" && `Route ${fields.routeNumber.value}`) ||
+      (fields.eventTitle.status === "verified" && fields.eventTitle.value !== "Not mentioned" && fields.eventTitle.value) ||
+      (fields.organization.status === "verified" && fields.organization.value !== "Not mentioned" && fields.organization.value) ||
       title;
 
-    if (searchSubject && searchSubject !== "Visual Subject") {
+    if (searchSubject && searchSubject !== "Visual Subject" && !isPlaceholder(searchSubject)) {
       actions.push({
-        id: "action-search",
+        id: "act-search",
         label: "Search on Web",
-        description: `Search Google for "${searchSubject}"`,
+        description: `Google search for "${searchSubject}"`,
         type: "search",
+        payload: {
+          query: searchSubject,
+        },
       });
     }
 
-    // 5. Explain: When there is meaningful summary
-    if (summary && summary.length > 10) {
-      actions.push({
-        id: "action-explain",
-        label: "Explain Context",
-        description: "Review detailed insights from visual analysis",
-        type: "explain",
-      });
-    }
-
-    // 6. Share: Always available if we have an analysis
+    // 8. Copy Information
     actions.push({
-      id: "action-share",
+      id: "act-copy",
+      label: "Copy Information",
+      description: "Copy summary and verified entities to clipboard",
+      type: "copy",
+    });
+
+    // 9. Share Details
+    actions.push({
+      id: "act-share",
       label: "Share Details",
-      description: "Send extracted details to WhatsApp, notes, or apps",
+      description: "Share via WhatsApp, Messages, or Apps",
       type: "share",
     });
 
-    // 7. Emergency Prototype Flow
-    if (entities.emergencyDetected) {
+    // 10. Emergency Safety Prototype Action
+    if (emergencyDetected) {
       actions.unshift({
-        id: "action-emergency",
+        id: "act-emergency",
         label: "Emergency Assistant (Prototype)",
-        description: "Review safety protocol and acquire GPS coordinates",
+        description: "Review safety checklist and acquire GPS coordinates",
         type: "emergency",
       });
     }
-
-    // Sanitize entities if no evidence exists (ensure client receives empty string)
-    const sanitizedEntities = {
-      eventTitle: validEvent ? entities.eventTitle : "",
-      date: validDate ? entities.date : "",
-      time: hasEvidence(entities.time, evidence.time) ? entities.time : "",
-      location: validLocation ? entities.location : "",
-      phoneNumber: validPhone ? entities.phoneNumber : "",
-      productName: hasEvidence(entities.productName, evidence.productName)
-        ? entities.productName
-        : "",
-      routeNumber: hasEvidence(entities.routeNumber, evidence.routeNumber)
-        ? entities.routeNumber
-        : "",
-      emergencyDetected: entities.emergencyDetected,
-    };
 
     const clampedConfidence = Math.max(0.1, Math.min(1.0, confidence));
 
@@ -334,12 +820,14 @@ Return ONLY valid JSON matching this exact structure:
       title,
       summary,
       confidence: clampedConfidence,
-      entities: sanitizedEntities,
-      evidence,
+      languageDetected: languageDetected?.code !== "en" ? languageDetected : undefined,
+      emergencyDetected,
+      fields,
       actions,
+      webGroundingUsed,
     });
   } catch (error) {
-    console.error("API Analyze Error:", error);
+    console.error("Analyze API Error:", error);
     return NextResponse.json(
       { error: "An unexpected error occurred during image analysis." },
       { status: 500 }

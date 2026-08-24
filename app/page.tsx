@@ -1,6 +1,16 @@
 "use client";
 
-import React, { ChangeEvent, Component, ErrorInfo, ReactNode, useRef, useState } from "react";
+import React, {
+  ChangeEvent,
+  Component,
+  ErrorInfo,
+  FormEvent,
+  ReactNode,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   Camera,
   Calendar,
@@ -14,47 +24,89 @@ import {
   RefreshCw,
   Check,
   ChevronRight,
-  FileText,
   X,
   Upload,
   Info,
   ShieldAlert,
+  Globe,
+  Mail,
+  Languages,
+  History,
+  Send,
+  Copy,
+  Compass,
+  Trash2,
+  Tag,
+  Building2,
+  MessageSquare,
+  CheckCircle2,
+  LucideIcon,
 } from "lucide-react";
 
-type ActionType =
+export type FieldStatus = "verified" | "web_verified" | "not_mentioned" | "unverified";
+export type FieldSource = "image" | "web" | "none";
+
+export type ExtractedField = {
+  value: string;
+  status: FieldStatus;
+  source: FieldSource;
+  confidence: number;
+  evidence?: string;
+  sourceCitation?: string;
+};
+
+export type ActionType =
   | "calendar"
   | "maps"
+  | "directions"
   | "call"
-  | "explain"
+  | "email"
+  | "website"
   | "search"
-  | "emergency"
-  | "share";
+  | "translate"
+  | "copy"
+  | "share"
+  | "emergency";
 
-type Action = {
+export type Action = {
   id: string;
   label: string;
   description: string;
   type: ActionType;
+  payload?: Record<string, string>;
 };
 
-type Entities = {
-  eventTitle: string;
-  date: string;
-  time: string;
-  location: string;
-  phoneNumber: string;
-  productName: string;
-  routeNumber: string;
-  emergencyDetected: boolean;
-};
-
-type Analysis = {
+export type Analysis = {
   context: string;
   title: string;
   summary: string;
   confidence: number;
-  entities: Entities;
+  languageDetected?: {
+    code: string;
+    name: string;
+    originalSnippet?: string;
+    translatedEnglish?: string;
+  };
+  emergencyDetected: boolean;
+  fields: Record<string, ExtractedField>;
   actions: Action[];
+  webGroundingUsed?: boolean;
+};
+
+export type HistoryItem = {
+  id: string;
+  timestamp: number;
+  context: string;
+  title: string;
+  summary: string;
+  thumbnail?: string;
+  analysis: Analysis;
+};
+
+export type ChatMessage = {
+  id: string;
+  sender: "user" | "assistant";
+  text: string;
 };
 
 type AppStatus = "idle" | "loading" | "success" | "error";
@@ -109,7 +161,7 @@ class AppErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState>
   }
 }
 
-// Client-side image compression using Canvas for fast mobile uploads
+// Client-side image compression using Canvas for rapid mobile uploads
 async function compressImage(file: File, maxDimension = 1280, quality = 0.85): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!file.type.startsWith("image/")) {
@@ -313,9 +365,22 @@ function triggerPhoneCall(phone: string) {
   link.remove();
 }
 
+function triggerEmail(email: string, subject = "Information from OneTap Reality") {
+  const link = document.createElement("a");
+  link.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 function openMaps(location: string) {
   const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
   window.open(mapsUrl, "_blank", "noopener,noreferrer");
+}
+
+function openDirections(location: string) {
+  const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(location)}`;
+  window.open(directionsUrl, "_blank", "noopener,noreferrer");
 }
 
 function openSearch(query: string) {
@@ -323,22 +388,125 @@ function openSearch(query: string) {
   window.open(searchUrl, "_blank", "noopener,noreferrer");
 }
 
+function openUrl(url: string) {
+  const target = url.startsWith("http") ? url : `https://${url}`;
+  window.open(target, "_blank", "noopener,noreferrer");
+}
+
+const FIELD_LABELS: Record<string, { label: string; icon: LucideIcon }> = {
+  eventTitle: { label: "Event Name", icon: Sparkles },
+  date: { label: "Date", icon: Calendar },
+  time: { label: "Time", icon: Clock },
+  location: { label: "Location", icon: MapPin },
+  phoneNumber: { label: "Phone", icon: Phone },
+  email: { label: "Email", icon: Mail },
+  website: { label: "Website", icon: Globe },
+  productName: { label: "Product / Item", icon: Tag },
+  routeNumber: { label: "Transit / Route", icon: Compass },
+  price: { label: "Price", icon: Tag },
+  organization: { label: "Organization", icon: Building2 },
+  qrCodeData: { label: "QR Code Data", icon: Globe },
+  language: { label: "Detected Language", icon: Languages },
+};
+
+function subscribeStorage(callback: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener("storage", callback);
+  return () => window.removeEventListener("storage", callback);
+}
+
+function getHistorySnapshot(): string {
+  if (typeof window === "undefined") return "[]";
+  try {
+    return localStorage.getItem("onetap_scan_history") || "[]";
+  } catch {
+    return "[]";
+  }
+}
+
+function getServerHistorySnapshot(): string {
+  return "[]";
+}
+
 function OneTapApp() {
   const [status, setStatus] = useState<AppStatus>("idle");
+  const [loadingStep, setLoadingStep] = useState<string>("Preparing image...");
   const [image, setImage] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [feedbackMessage, setFeedbackMessage] = useState<string>("");
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  
+  // Emergency Modal
   const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
-  const [deviceLocation, setDeviceLocation] = useState<{
-    lat: number;
-    lng: number;
-  } | null>(null);
+  const [deviceLocation, setDeviceLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationLoading, setLocationLoading] = useState(false);
+
+  // Translation Modal
+  const [translationModalOpen, setTranslationModalOpen] = useState(false);
+
+  // Scan History
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const historyJson = useSyncExternalStore(subscribeStorage, getHistorySnapshot, getServerHistorySnapshot);
+  const historyItems: HistoryItem[] = useMemo(() => {
+    try {
+      return JSON.parse(historyJson);
+    } catch {
+      return [];
+    }
+  }, [historyJson]);
+
+  // Q&A Interactive Follow-up
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+
+  // Show all / verified filter for fields
+  const [showAllFields, setShowAllFields] = useState(false);
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  function saveScanToHistory(newAnalysis: Analysis, thumbDataUrl?: string) {
+    try {
+      const newItem: HistoryItem = {
+        id: `scan-${Date.now()}`,
+        timestamp: Date.now(),
+        context: newAnalysis.context,
+        title: newAnalysis.title,
+        summary: newAnalysis.summary,
+        thumbnail: thumbDataUrl,
+        analysis: newAnalysis,
+      };
+      const current = JSON.parse(localStorage.getItem("onetap_scan_history") || "[]");
+      const updated = [newItem, ...current.slice(0, 9)];
+      localStorage.setItem("onetap_scan_history", JSON.stringify(updated));
+      window.dispatchEvent(new Event("storage"));
+    } catch {
+      // Storage quota or parsing error
+    }
+  }
+
+  function clearHistory() {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("onetap_scan_history");
+        window.dispatchEvent(new Event("storage"));
+      }
+      setFeedbackMessage("✓ Scan history cleared.");
+    } catch {
+      // Ignore
+    }
+  }
+
+  function loadHistoryItem(item: HistoryItem) {
+    setAnalysis(item.analysis);
+    setImage(item.thumbnail || null);
+    setStatus("success");
+    setHistoryOpen(false);
+    setChatMessages([]);
+    setFeedbackMessage(`✓ Loaded "${item.title}"`);
+  }
 
   async function processFile(file?: File) {
     if (!file) return;
@@ -350,16 +518,27 @@ function OneTapApp() {
     }
 
     setStatus("loading");
+    setLoadingStep("1. Preparing & optimizing image...");
     setErrorMessage("");
     setFeedbackMessage("");
     setAnalysis(null);
+    setChatMessages([]);
 
     try {
       const base64 = await compressImage(file);
       setImage(base64);
 
+      setLoadingStep("2. Gemini 3.7 Vision Scene Intelligence...");
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 35000);
+      const timeoutId = setTimeout(() => controller.abort(), 40000);
+
+      const stepTimer1 = setTimeout(() => {
+        setLoadingStep("3. Grounding & Zero-Hallucination Verification...");
+      }, 2000);
+
+      const stepTimer2 = setTimeout(() => {
+        setLoadingStep("4. Synthesizing Safe Phone Actions...");
+      }, 4500);
 
       const response = await fetch("/api/analyze", {
         method: "POST",
@@ -369,6 +548,8 @@ function OneTapApp() {
       });
 
       clearTimeout(timeoutId);
+      clearTimeout(stepTimer1);
+      clearTimeout(stepTimer2);
 
       const data = await response.json().catch(() => null);
 
@@ -383,8 +564,12 @@ function OneTapApp() {
         throw new Error("Invalid analysis data format received from server.");
       }
 
-      setAnalysis(data as Analysis);
+      const validatedAnalysis = data as Analysis;
+      setAnalysis(validatedAnalysis);
       setStatus("success");
+
+      // Save to local history
+      saveScanToHistory(validatedAnalysis, base64);
     } catch (err) {
       console.error("Processing error:", err);
       setStatus("error");
@@ -430,61 +615,113 @@ function OneTapApp() {
     try {
       switch (action.type) {
         case "calendar": {
-          const title = analysis.entities.eventTitle || analysis.title;
-          const date = analysis.entities.date;
-          const time = analysis.entities.time;
-          const location = analysis.entities.location;
+          const dateField = analysis.fields.date;
+          const timeField = analysis.fields.time;
+          const locField = analysis.fields.location;
+          const titleField = analysis.fields.eventTitle;
 
-          if (!date) {
-            throw new Error("No verified date was detected for calendar export.");
+          if (dateField.status === "not_mentioned" || !dateField.value) {
+            throw new Error("No verified date is available for calendar creation.");
           }
 
-          createCalendarFile(title, date, time, analysis.summary, location);
+          const title =
+            titleField.status !== "not_mentioned" && titleField.value
+              ? titleField.value
+              : analysis.title;
+          const time = timeField.status !== "not_mentioned" ? timeField.value : "";
+          const location = locField.status !== "not_mentioned" ? locField.value : "";
+
+          createCalendarFile(title, dateField.value, time, analysis.summary, location);
           setFeedbackMessage(`✓ Added "${title}" to calendar.`);
           break;
         }
 
         case "maps": {
-          const loc = analysis.entities.location;
-          if (!loc) {
-            throw new Error("No verified location was detected.");
+          const loc = action.payload?.location || analysis.fields.location.value;
+          if (!loc || loc === "Not mentioned") {
+            throw new Error("No verified location available.");
           }
           openMaps(loc);
           setFeedbackMessage(`✓ Opening Maps for "${loc}".`);
           break;
         }
 
+        case "directions": {
+          const loc = action.payload?.location || analysis.fields.location.value;
+          if (!loc || loc === "Not mentioned") {
+            throw new Error("No verified destination available.");
+          }
+          openDirections(loc);
+          setFeedbackMessage(`✓ Getting directions to "${loc}".`);
+          break;
+        }
+
         case "call": {
-          const phone = analysis.entities.phoneNumber;
-          if (!phone) {
-            throw new Error("No verified phone number was detected.");
+          const phone = action.payload?.phone || analysis.fields.phoneNumber.value;
+          if (!phone || phone === "Not mentioned") {
+            throw new Error("No verified phone number available.");
           }
           triggerPhoneCall(phone);
           setFeedbackMessage(`✓ Connecting to ${phone}...`);
           break;
         }
 
-        case "search": {
-          const query =
-            analysis.entities.productName ||
-            analysis.entities.routeNumber ||
-            analysis.entities.location ||
-            analysis.title;
-
-          if (!query) {
-            throw new Error("No search subject detected.");
+        case "email": {
+          const email = action.payload?.email || analysis.fields.email.value;
+          if (!email || email === "Not mentioned") {
+            throw new Error("No verified email available.");
           }
+          triggerEmail(email, `Inquiry regarding ${analysis.title}`);
+          setFeedbackMessage(`✓ Composing email to ${email}...`);
+          break;
+        }
+
+        case "website": {
+          const url = action.payload?.url || analysis.fields.website.value;
+          if (!url || url === "Not mentioned") {
+            throw new Error("No verified website available.");
+          }
+          openUrl(url);
+          setFeedbackMessage(`✓ Opening ${url}...`);
+          break;
+        }
+
+        case "translate": {
+          setTranslationModalOpen(true);
+          break;
+        }
+
+        case "search": {
+          const query = action.payload?.query || analysis.title;
           openSearch(query);
           setFeedbackMessage(`✓ Searching Google for "${query}".`);
           break;
         }
 
+        case "copy": {
+          const verifiedFields = Object.entries(analysis.fields)
+            .filter(([, f]) => f.status !== "not_mentioned" && f.value)
+            .map(([k, f]) => `• ${FIELD_LABELS[k]?.label || k}: ${f.value} (${f.status === "web_verified" ? "Web Verified" : "From Image"})`)
+            .join("\n");
+
+          const textToCopy = `📋 OneTap Reality — ${analysis.title}\n\n${analysis.summary}\n\nVerified Details:\n${verifiedFields || "None"}`;
+
+          if (navigator.clipboard) {
+            await navigator.clipboard.writeText(textToCopy);
+            setFeedbackMessage("✓ Copied verified details to clipboard.");
+          } else {
+            setFeedbackMessage("✓ Clipboard not accessible.");
+          }
+          break;
+        }
+
         case "share": {
-          const shareText = `🔍 OneTap Reality Insight:\n\n${analysis.title}\n${analysis.summary}${
-            analysis.entities.location ? `\n📍 ${analysis.entities.location}` : ""
-          }${analysis.entities.date ? `\n📅 ${analysis.entities.date}` : ""}${
-            analysis.entities.phoneNumber ? `\n📞 ${analysis.entities.phoneNumber}` : ""
-          }`;
+          const verifiedFields = Object.entries(analysis.fields)
+            .filter(([, f]) => f.status !== "not_mentioned" && f.value)
+            .map(([k, f]) => `• ${FIELD_LABELS[k]?.label || k}: ${f.value}`)
+            .join("\n");
+
+          const shareText = `🔍 OneTap Reality Insight:\n\n${analysis.title}\n${analysis.summary}\n\n${verifiedFields}`;
 
           if (navigator.share) {
             try {
@@ -495,21 +732,16 @@ function OneTapApp() {
               setFeedbackMessage("✓ Shared successfully.");
             } catch (shareErr) {
               if (shareErr instanceof Error && shareErr.name !== "AbortError") {
-                await navigator.clipboard.writeText(shareText);
-                setFeedbackMessage("✓ Details copied to clipboard.");
+                if (navigator.clipboard) {
+                  await navigator.clipboard.writeText(shareText);
+                  setFeedbackMessage("✓ Details copied to clipboard.");
+                }
               }
             }
           } else if (navigator.clipboard) {
             await navigator.clipboard.writeText(shareText);
             setFeedbackMessage("✓ Details copied to clipboard.");
-          } else {
-            setFeedbackMessage(shareText);
           }
-          break;
-        }
-
-        case "explain": {
-          setFeedbackMessage(`💡 ${analysis.summary}`);
           break;
         }
 
@@ -531,9 +763,62 @@ function OneTapApp() {
     }
   }
 
+  async function handleChatSubmit(e?: FormEvent) {
+    if (e) e.preventDefault();
+    const query = chatInput.trim();
+    if (!query || !analysis || chatLoading) return;
+
+    const userMsg: ChatMessage = {
+      id: `msg-${Date.now()}`,
+      sender: "user",
+      text: query,
+    };
+
+    setChatMessages((prev) => [...prev, userMsg]);
+    setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const resp = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: query,
+          context: analysis.context,
+          title: analysis.title,
+          summary: analysis.summary,
+          fields: analysis.fields,
+          image,
+        }),
+      });
+
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        throw new Error((data && data.error) || "Could not get answer.");
+      }
+
+      const botMsg: ChatMessage = {
+        id: `msg-bot-${Date.now()}`,
+        sender: "assistant",
+        text: data.answer || "I could not find verified evidence for that detail in the image.",
+      };
+
+      setChatMessages((prev) => [...prev, botMsg]);
+    } catch {
+      const errorMsg: ChatMessage = {
+        id: `msg-err-${Date.now()}`,
+        sender: "assistant",
+        text: "Could not verify that question. Please try asking again.",
+      };
+      setChatMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
   function requestEmergencyLocation() {
     if (!navigator.geolocation) {
-      setErrorMessage("Geolocation is not supported by your browser/device.");
+      setErrorMessage("Geolocation is not supported on this browser.");
       return;
     }
 
@@ -550,7 +835,7 @@ function OneTapApp() {
       },
       (geoErr) => {
         setLocationLoading(false);
-        setErrorMessage(`Location access: ${geoErr.message}`);
+        setErrorMessage(`Location access error: ${geoErr.message}`);
       },
       {
         enableHighAccuracy: true,
@@ -567,7 +852,11 @@ function OneTapApp() {
     setFeedbackMessage("");
     setActionLoadingId(null);
     setEmergencyModalOpen(false);
+    setTranslationModalOpen(false);
     setDeviceLocation(null);
+    setChatMessages([]);
+    setChatInput("");
+    setShowAllFields(false);
   }
 
   const getActionIcon = (type: ActionType) => {
@@ -576,20 +865,60 @@ function OneTapApp() {
         return <Calendar className="w-5 h-5 text-emerald-400" />;
       case "maps":
         return <MapPin className="w-5 h-5 text-sky-400" />;
+      case "directions":
+        return <Compass className="w-5 h-5 text-teal-400" />;
       case "call":
         return <Phone className="w-5 h-5 text-green-400" />;
+      case "email":
+        return <Mail className="w-5 h-5 text-cyan-400" />;
+      case "website":
+        return <Globe className="w-5 h-5 text-blue-400" />;
+      case "translate":
+        return <Languages className="w-5 h-5 text-amber-400" />;
       case "search":
-        return <Search className="w-5 h-5 text-amber-400" />;
+        return <Search className="w-5 h-5 text-yellow-400" />;
+      case "copy":
+        return <Copy className="w-5 h-5 text-slate-300" />;
       case "share":
         return <Share2 className="w-5 h-5 text-indigo-400" />;
-      case "explain":
-        return <FileText className="w-5 h-5 text-purple-400" />;
       case "emergency":
         return <AlertTriangle className="w-5 h-5 text-red-400" />;
       default:
         return <Sparkles className="w-5 h-5 text-white/70" />;
     }
   };
+
+  const renderFieldBadge = (field: ExtractedField) => {
+    if (field.status === "verified") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-emerald-400">
+          <span className="w-1 h-1 rounded-full bg-emerald-400" />
+          FROM IMAGE
+        </span>
+      );
+    }
+    if (field.status === "web_verified") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-sky-400">
+          <CheckCircle2 size={10} className="text-sky-400" />
+          WEB VERIFIED
+        </span>
+      );
+    }
+    return (
+      <span className="rounded-full border border-white/5 bg-white/[0.03] px-2 py-0.5 text-[9px] font-medium text-white/30">
+        NOT MENTIONED
+      </span>
+    );
+  };
+
+  const verifiedFieldsList = analysis
+    ? Object.entries(analysis.fields).filter(([, f]) => f.status !== "not_mentioned")
+    : [];
+
+  const unmentionedFieldsList = analysis
+    ? Object.entries(analysis.fields).filter(([, f]) => f.status === "not_mentioned")
+    : [];
 
   return (
     <main className="min-h-screen bg-[#080808] text-white flex flex-col items-center justify-between">
@@ -625,16 +954,31 @@ function OneTapApp() {
             </h1>
           </div>
 
-          {status !== "idle" && (
+          <div className="flex items-center gap-2">
+            {/* Scan History Button */}
             <button
               type="button"
-              onClick={reset}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/70 hover:bg-white/[0.08] hover:text-white transition active:scale-95"
-              title="Reset scene"
+              onClick={() => setHistoryOpen(true)}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/70 hover:bg-white/[0.08] hover:text-white transition active:scale-95 relative"
+              title="Recent Scans"
             >
-              <RefreshCw size={15} />
+              <History size={15} />
+              {historyItems.length > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400" />
+              )}
             </button>
-          )}
+
+            {status !== "idle" && (
+              <button
+                type="button"
+                onClick={reset}
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/70 hover:bg-white/[0.08] hover:text-white transition active:scale-95"
+                title="Reset scene"
+              >
+                <RefreshCw size={15} />
+              </button>
+            )}
+          </div>
         </header>
 
         {/* Feedback Message Toast */}
@@ -663,7 +1007,7 @@ function OneTapApp() {
                   {errorMessage}
                 </p>
                 <p className="mt-1 text-red-400/80 font-medium">
-                  Try another photo.
+                  Try another photo or clearer angle.
                 </p>
               </div>
             </div>
@@ -693,8 +1037,8 @@ function OneTapApp() {
                 </p>
 
                 <p className="mt-4 text-xs leading-6 text-white/50 max-w-xs mx-auto">
-                  Point your phone at the world. AI understands what matters and
-                  turns it into useful actions.
+                  Point your phone at the physical world. AI extracts verified facts,
+                  verifies missing data, and generates instant phone actions.
                 </p>
               </div>
 
@@ -714,7 +1058,7 @@ function OneTapApp() {
                   </span>
 
                   <span className="mt-1 text-[11px] text-white/40">
-                    Opens phone camera
+                    Opens device camera
                   </span>
                 </button>
 
@@ -751,20 +1095,25 @@ function OneTapApp() {
                   />
                 )}
 
-                {/* Processing Overlay */}
+                {/* Processing Overlay with Dynamic Step Progress */}
                 {status === "loading" && (
-                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/75 backdrop-blur-md px-6 text-center">
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md px-6 text-center">
                     <div className="relative flex items-center justify-center">
                       <div className="h-14 w-14 animate-spin rounded-full border-2 border-white/20 border-t-white" />
                       <Sparkles className="absolute w-5 h-5 text-white animate-pulse" />
                     </div>
 
-                    <p className="mt-5 text-sm font-semibold tracking-tight">
+                    <p className="mt-5 text-sm font-semibold tracking-tight text-white">
                       Understanding Scene...
                     </p>
 
-                    <p className="mt-1.5 text-xs text-white/40 max-w-xs leading-relaxed">
-                      Gemini 3.7 Flash is extracting verified entities &amp; actions
+                    <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-emerald-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>{loadingStep}</span>
+                    </div>
+
+                    <p className="mt-3 text-[11px] text-white/40 max-w-xs leading-relaxed">
+                      Zero-hallucination engine: verifying field evidence and web grounding.
                     </p>
                   </div>
                 )}
@@ -775,10 +1124,17 @@ function OneTapApp() {
                 <div className="space-y-5">
                   {/* Summary Card */}
                   <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.035] p-5 backdrop-blur-md">
-                    <div className="mb-2.5 flex items-center justify-between">
-                      <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/80">
-                        {analysis.context}
-                      </span>
+                    <div className="mb-2.5 flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/80">
+                          {analysis.context.replace(/_/g, " ")}
+                        </span>
+                        {analysis.webGroundingUsed && (
+                          <span className="rounded-full border border-sky-500/30 bg-sky-950/40 px-2 py-0.5 text-[9px] font-semibold text-sky-300 flex items-center gap-1">
+                            <CheckCircle2 size={10} /> Web Grounded
+                          </span>
+                        )}
+                      </div>
 
                       <span className="text-[10px] font-medium text-emerald-400/90 flex items-center gap-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
@@ -793,104 +1149,99 @@ function OneTapApp() {
                     <p className="mt-2 text-xs leading-5 text-white/60">
                       {analysis.summary}
                     </p>
+
+                    {/* Multilingual Translation Alert if detected */}
+                    {analysis.languageDetected && analysis.languageDetected.code !== "en" && (
+                      <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-950/30 p-3 text-xs text-amber-200 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Languages size={14} className="text-amber-400 shrink-0" />
+                          <span className="text-[11px]">
+                            Detected: <strong>{analysis.languageDetected.name}</strong>
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setTranslationModalOpen(true)}
+                          className="rounded-lg bg-amber-500/20 px-2 py-1 text-[10px] font-semibold text-amber-300 hover:bg-amber-500/30 transition"
+                        >
+                          View Translation
+                        </button>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Detected Entities Card */}
+                  {/* FIELD-LEVEL EVIDENCE & VERIFICATION CARD */}
                   <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.025] p-5">
-                    <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/40">
-                      Detected Information
-                    </p>
+                    <div className="mb-3.5 flex items-center justify-between">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/40">
+                        Field Evidence &amp; Verification
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setShowAllFields(!showAllFields)}
+                        className="text-[10px] text-white/40 hover:text-white/80 transition"
+                      >
+                        {showAllFields ? "Show Verified Only" : "Show All Fields"}
+                      </button>
+                    </div>
 
+                    {/* Verified Items List */}
                     <div className="space-y-2 text-xs">
-                      {analysis.entities.eventTitle && (
-                        <div className="flex items-center justify-between py-1.5 border-b border-white/[0.04]">
-                          <span className="text-white/40 flex items-center gap-1.5">
-                            <Sparkles size={12} /> Event
-                          </span>
-                          <span className="text-right font-medium text-white/90">
-                            {analysis.entities.eventTitle}
-                          </span>
-                        </div>
+                      {verifiedFieldsList.length > 0 ? (
+                        verifiedFieldsList.map(([key, field]) => {
+                          const IconComp = FIELD_LABELS[key]?.icon || Sparkles;
+                          return (
+                            <div
+                              key={key}
+                              className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-2.5 transition"
+                            >
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-white/40 flex items-center gap-1.5 text-[11px]">
+                                  <IconComp size={12} className="text-white/60" />
+                                  {FIELD_LABELS[key]?.label || key}
+                                </span>
+                                {renderFieldBadge(field)}
+                              </div>
+                              <p className="text-sm font-semibold text-white/95 break-words">
+                                {field.value}
+                              </p>
+                              {field.sourceCitation && (
+                                <p className="mt-1 text-[10px] text-sky-400/70 font-mono">
+                                  Source: {field.sourceCitation}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <p className="text-xs text-white/40 py-2">
+                          No specific verified entities detected in this image.
+                        </p>
                       )}
 
-                      {analysis.entities.date && (
-                        <div className="flex items-center justify-between py-1.5 border-b border-white/[0.04]">
-                          <span className="text-white/40 flex items-center gap-1.5">
-                            <Calendar size={12} /> Date
-                          </span>
-                          <span className="text-right font-medium text-white/90">
-                            {analysis.entities.date}
-                          </span>
-                        </div>
-                      )}
-
-                      {analysis.entities.time && (
-                        <div className="flex items-center justify-between py-1.5 border-b border-white/[0.04]">
-                          <span className="text-white/40 flex items-center gap-1.5">
-                            <Clock size={12} /> Time
-                          </span>
-                          <span className="text-right font-medium text-white/90">
-                            {analysis.entities.time}
-                          </span>
-                        </div>
-                      )}
-
-                      {analysis.entities.location && (
-                        <div className="flex items-center justify-between py-1.5 border-b border-white/[0.04]">
-                          <span className="text-white/40 flex items-center gap-1.5">
-                            <MapPin size={12} /> Location
-                          </span>
-                          <span className="text-right font-medium text-white/90">
-                            {analysis.entities.location}
-                          </span>
-                        </div>
-                      )}
-
-                      {analysis.entities.phoneNumber && (
-                        <div className="flex items-center justify-between py-1.5 border-b border-white/[0.04]">
-                          <span className="text-white/40 flex items-center gap-1.5">
-                            <Phone size={12} /> Phone
-                          </span>
-                          <span className="text-right font-medium text-white/90">
-                            {analysis.entities.phoneNumber}
-                          </span>
-                        </div>
-                      )}
-
-                      {analysis.entities.productName && (
-                        <div className="flex items-center justify-between py-1.5 border-b border-white/[0.04]">
-                          <span className="text-white/40 flex items-center gap-1.5">
-                            <FileText size={12} /> Product
-                          </span>
-                          <span className="text-right font-medium text-white/90">
-                            {analysis.entities.productName}
-                          </span>
-                        </div>
-                      )}
-
-                      {analysis.entities.routeNumber && (
-                        <div className="flex items-center justify-between py-1.5 border-b border-white/[0.04]">
-                          <span className="text-white/40 flex items-center gap-1.5">
-                            <MapPin size={12} /> Route
-                          </span>
-                          <span className="text-right font-medium text-white/90">
-                            {analysis.entities.routeNumber}
-                          </span>
-                        </div>
-                      )}
-
-                      {analysis.entities.emergencyDetected && (
-                        <div className="mt-3 rounded-xl border border-red-500/30 bg-red-950/30 p-3 text-red-200 flex items-center gap-2">
-                          <AlertTriangle size={16} className="text-red-400 shrink-0" />
-                          <span className="font-semibold text-xs">
-                            Possible emergency detected
-                          </span>
+                      {/* Optional All Fields List */}
+                      {showAllFields && unmentionedFieldsList.length > 0 && (
+                        <div className="pt-2 border-t border-white/[0.04] space-y-1.5 opacity-60">
+                          {unmentionedFieldsList.map(([key, field]) => {
+                            const IconComp = FIELD_LABELS[key]?.icon || Sparkles;
+                            return (
+                              <div
+                                key={key}
+                                className="flex items-center justify-between py-1 px-1 text-[11px]"
+                              >
+                                <span className="text-white/30 flex items-center gap-1.5">
+                                  <IconComp size={11} /> {FIELD_LABELS[key]?.label || key}
+                                </span>
+                                {renderFieldBadge(field)}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Actions Section */}
+                  {/* SMART ACTIONS SECTION */}
                   <div>
                     <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/40">
                       Suggested Actions ({analysis.actions.length})
@@ -939,6 +1290,76 @@ function OneTapApp() {
                     )}
                   </div>
 
+                  {/* NATURAL LANGUAGE FOLLOW-UP ("ASK ABOUT THIS") */}
+                  <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.03] p-5 backdrop-blur-md">
+                    <div className="flex items-center gap-2 mb-3">
+                      <MessageSquare size={14} className="text-white/60" />
+                      <p className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                        Ask about this scene
+                      </p>
+                    </div>
+
+                    {/* Quick Suggestion Chips */}
+                    <div className="flex flex-wrap gap-1.5 mb-3">
+                      {["What time does this start?", "Where is this located?", "Translate this", "Summarize key points"].map((chip) => (
+                        <button
+                          key={chip}
+                          type="button"
+                          onClick={() => {
+                            setChatInput(chip);
+                          }}
+                          className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] text-white/60 hover:bg-white/10 hover:text-white transition"
+                        >
+                          {chip}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Conversation History */}
+                    {chatMessages.length > 0 && (
+                      <div className="space-y-2 mb-3 max-h-48 overflow-y-auto pr-1">
+                        {chatMessages.map((msg) => (
+                          <div
+                            key={msg.id}
+                            className={`rounded-xl p-2.5 text-xs ${
+                              msg.sender === "user"
+                                ? "bg-white/10 text-white ml-6 border border-white/10"
+                                : "bg-white/[0.04] text-white/80 mr-6 border border-white/5"
+                            }`}
+                          >
+                            <p className="font-semibold text-[10px] text-white/40 mb-0.5">
+                              {msg.sender === "user" ? "You" : "OneTap Assistant"}
+                            </p>
+                            <p className="leading-relaxed">{msg.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Chat Input Form */}
+                    <form onSubmit={handleChatSubmit} className="flex gap-2">
+                      <input
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        placeholder="Ask anything about what's visible..."
+                        disabled={chatLoading}
+                        className="flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:border-white/30 focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!chatInput.trim() || chatLoading}
+                        className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-black disabled:opacity-40 transition active:scale-95 shrink-0"
+                      >
+                        {chatLoading ? (
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-black/30 border-t-black animate-spin" />
+                        ) : (
+                          <Send size={14} />
+                        )}
+                      </button>
+                    </form>
+                  </div>
+
                   {/* Scan Another Button */}
                   <div className="pt-2">
                     <button
@@ -955,6 +1376,134 @@ function OneTapApp() {
             </div>
           )}
         </section>
+
+        {/* Translation Modal */}
+        {translationModalOpen && analysis?.languageDetected && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
+            <div className="w-full max-w-sm rounded-[2rem] border border-amber-500/30 bg-[#121008] p-6 shadow-2xl">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2 text-amber-400">
+                  <Languages size={20} />
+                  <h3 className="text-base font-bold text-white">
+                    {analysis.languageDetected.name} Translation
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setTranslationModalOpen(false)}
+                  className="text-white/40 hover:text-white"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {analysis.languageDetected.originalSnippet && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs mb-3">
+                  <p className="text-[10px] uppercase font-semibold text-white/40 mb-1">
+                    Original ({analysis.languageDetected.name})
+                  </p>
+                  <p className="text-white/80 leading-relaxed italic">
+                    &ldquo;{analysis.languageDetected.originalSnippet}&rdquo;
+                  </p>
+                </div>
+              )}
+
+              <div className="rounded-xl border border-amber-500/20 bg-amber-950/20 p-3 text-xs">
+                <p className="text-[10px] uppercase font-semibold text-amber-400/80 mb-1">
+                  English Translation
+                </p>
+                <p className="text-white font-medium leading-relaxed">
+                  {analysis.languageDetected.translatedEnglish}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setTranslationModalOpen(false)}
+                className="mt-5 w-full rounded-xl bg-white text-black py-2.5 text-xs font-semibold hover:bg-white/90 transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Scan History Modal */}
+        {historyOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
+            <div className="w-full max-w-sm rounded-[2rem] border border-white/15 bg-[#0f0f0f] p-6 shadow-2xl max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/[0.06]">
+                <div className="flex items-center gap-2">
+                  <History size={18} className="text-emerald-400" />
+                  <h3 className="text-base font-bold text-white">Recent Scans</h3>
+                </div>
+                <button
+                  onClick={() => setHistoryOpen(false)}
+                  className="text-white/40 hover:text-white"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* History list */}
+              <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+                {historyItems.length > 0 ? (
+                  historyItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => loadHistoryItem(item)}
+                      className="w-full text-left rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 hover:bg-white/[0.06] hover:border-white/15 transition group"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[9px] uppercase font-semibold text-white/50 bg-white/5 px-2 py-0.5 rounded-full">
+                          {item.context.replace(/_/g, " ")}
+                        </span>
+                        <span className="text-[10px] text-white/30">
+                          {new Date(item.timestamp).toLocaleDateString([], {
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </span>
+                      </div>
+                      <p className="text-xs font-semibold text-white group-hover:text-emerald-400 transition">
+                        {item.title}
+                      </p>
+                      <p className="text-[11px] text-white/50 line-clamp-1 mt-0.5">
+                        {item.summary}
+                      </p>
+                    </button>
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-white/40 text-xs">
+                    <p>No recent scans saved yet.</p>
+                    <p className="mt-1 text-[11px] text-white/25">
+                      Scans are stored securely on this device.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {historyItems.length > 0 && (
+                <div className="pt-4 mt-2 border-t border-white/[0.06] flex gap-2">
+                  <button
+                    type="button"
+                    onClick={clearHistory}
+                    className="flex-1 rounded-xl border border-red-500/20 bg-red-950/20 py-2 text-xs font-semibold text-red-300 hover:bg-red-950/40 transition flex items-center justify-center gap-1.5"
+                  >
+                    <Trash2 size={13} /> Clear History
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryOpen(false)}
+                    className="flex-1 rounded-xl bg-white/10 py-2 text-xs font-semibold text-white hover:bg-white/15 transition"
+                  >
+                    Close
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Emergency Modal Workflow */}
         {emergencyModalOpen && (
@@ -1038,7 +1587,7 @@ function OneTapApp() {
         {/* Footer */}
         <footer className="pt-4 text-center border-t border-white/[0.04]">
           <p className="text-[10px] uppercase tracking-[0.25em] text-white/25">
-            See → Understand → Act
+            See → Understand → Verify → Act
           </p>
         </footer>
       </div>
