@@ -767,15 +767,67 @@ Return JSON:
       });
     }
 
-    // 7. Search: Identified Entity or Product
-    const searchSubject =
-      (fields.productName.status === "verified" && fields.productName.value !== "Not mentioned" && fields.productName.value) ||
-      (fields.routeNumber.status === "verified" && fields.routeNumber.value !== "Not mentioned" && `Route ${fields.routeNumber.value}`) ||
-      (fields.eventTitle.status === "verified" && fields.eventTitle.value !== "Not mentioned" && fields.eventTitle.value) ||
-      (fields.organization.status === "verified" && fields.organization.value !== "Not mentioned" && fields.organization.value) ||
-      title;
+    // 7. Context-Aware Smart Web Search (strongest verified contextual query)
+    const org =
+      fields.organization.status === "verified" &&
+      fields.organization.value !== "Not mentioned" &&
+      !isPlaceholder(fields.organization.value)
+        ? fields.organization.value
+        : "";
 
-    if (searchSubject && searchSubject !== "Visual Subject" && !isPlaceholder(searchSubject)) {
+    const event =
+      fields.eventTitle.status === "verified" &&
+      fields.eventTitle.value !== "Not mentioned" &&
+      !isPlaceholder(fields.eventTitle.value)
+        ? fields.eventTitle.value
+        : "";
+
+    const product =
+      fields.productName.status === "verified" &&
+      fields.productName.value !== "Not mentioned" &&
+      !isPlaceholder(fields.productName.value)
+        ? fields.productName.value
+        : "";
+
+    const loc =
+      (fields.location.status === "verified" || fields.location.status === "web_verified") &&
+      fields.location.value !== "Not mentioned" &&
+      !isPlaceholder(fields.location.value)
+        ? fields.location.value
+        : "";
+
+    let searchSubject = "";
+
+    // 1. [Organization] + [Event Title] (e.g. "Borcelle College Art Fair")
+    if (org && event && !org.toLowerCase().includes(event.toLowerCase()) && !event.toLowerCase().includes(org.toLowerCase())) {
+      searchSubject = `${org} ${event}`;
+    }
+    // 2. [Organization] + [Product Name]
+    else if (org && product && !org.toLowerCase().includes(product.toLowerCase()) && !product.toLowerCase().includes(org.toLowerCase())) {
+      searchSubject = `${org} ${product}`;
+    }
+    // 3. [Organization] + [Location]
+    else if (org && loc && !org.toLowerCase().includes(loc.toLowerCase())) {
+      searchSubject = `${org} ${loc}`;
+    }
+    // 4. [Event Title] + [Location]
+    else if (event && loc && !event.toLowerCase().includes(loc.toLowerCase())) {
+      searchSubject = `${event} ${loc}`;
+    }
+    // 5. Individual strong entities
+    else if (event) {
+      searchSubject = event;
+    } else if (product) {
+      searchSubject = product;
+    } else if (org) {
+      searchSubject = org;
+    } else if (fields.routeNumber.status === "verified" && fields.routeNumber.value !== "Not mentioned") {
+      searchSubject = `Route ${fields.routeNumber.value}`;
+    } else if (title && title !== "Visual Subject" && !isPlaceholder(title)) {
+      searchSubject = title;
+    }
+
+    if (searchSubject && !isPlaceholder(searchSubject)) {
       actions.push({
         id: "act-search",
         label: "Search on Web",

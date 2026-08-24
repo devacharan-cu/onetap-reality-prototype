@@ -47,4 +47,8 @@ declare module 'lucide-react' {
   export const ArrowRight: LucideIcon;
   export const CheckCircle2: LucideIcon;
   export const XCircle: LucideIcon;
+  export const Sun: LucideIcon;
+  export const Moon: LucideIcon;
+  export const Monitor: LucideIcon;
+  export const Download: LucideIcon;
 }

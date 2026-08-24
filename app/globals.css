@@ -1,22 +1,67 @@
 @import "tailwindcss";
 
 :root {
-  --background: #080808;
-  --foreground: #ffffff;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  
+  /* Default Dark Mode Custom Properties */
+  --bg-app: #080808;
+  --bg-card: rgba(255, 255, 255, 0.035);
+  --bg-card-subtle: rgba(255, 255, 255, 0.02);
+  --bg-card-hover: rgba(255, 255, 255, 0.07);
+  --bg-pill: rgba(255, 255, 255, 0.06);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-medium: rgba(255, 255, 255, 0.15);
+  --text-primary: #FFFFFF;
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-muted: rgba(255, 255, 255, 0.35);
+  --accent-emerald: #34D399;
+  --accent-emerald-bg: rgba(52, 211, 153, 0.12);
+  --accent-emerald-border: rgba(52, 211, 153, 0.25);
+  --btn-primary-bg: #FFFFFF;
+  --btn-primary-text: #000000;
+  --modal-bg: #0F0F0F;
+  --overlay-bg: rgba(0, 0, 0, 0.85);
+}
+
+html.light {
+  /* Premium Light Mode Custom Properties */
+  --bg-app: #F8F8F7;
+  --bg-card: #FFFFFF;
+  --bg-card-subtle: rgba(0, 0, 0, 0.02);
+  --bg-card-hover: #F1F1EF;
+  --bg-pill: rgba(0, 0, 0, 0.05);
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-medium: rgba(0, 0, 0, 0.16);
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+  --accent-emerald: #059669;
+  --accent-emerald-bg: rgba(5, 150, 105, 0.1);
+  --accent-emerald-border: rgba(5, 150, 105, 0.25);
+  --btn-primary-bg: #0F172A;
+  --btn-primary-text: #FFFFFF;
+  --modal-bg: #FFFFFF;
+  --overlay-bg: rgba(15, 23, 42, 0.65);
 }
 
 * {
   box-sizing: border-box;
 }
 
-html,
-body {
+html, body {
   margin: 0;
   padding: 0;
   min-height: 100%;
-  background: #080808;
-  color: #ffffff;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+/* Accessibility focus-visible styling */
+button:focus-visible, a:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent-emerald);
+  outline-offset: 2px;
 }

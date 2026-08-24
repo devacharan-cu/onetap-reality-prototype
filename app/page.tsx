@@ -40,6 +40,9 @@ import {
   Building2,
   MessageSquare,
   CheckCircle2,
+  Download,
+  Sun,
+  Moon,
   LucideIcon,
 } from "lucide-react";
 
@@ -110,6 +113,7 @@ export type ChatMessage = {
 };
 
 type AppStatus = "idle" | "loading" | "success" | "error";
+type ThemeMode = "dark" | "light" | "system";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -137,12 +141,12 @@ class AppErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState>
   render() {
     if (this.state.hasError) {
       return (
-        <main className="min-h-screen bg-[#080808] text-white flex flex-col items-center justify-center p-6 text-center">
+        <main className="min-h-screen bg-[var(--bg-app)] text-[var(--text-primary)] flex flex-col items-center justify-center p-6 text-center">
           <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 mb-4">
             <AlertTriangle size={28} />
           </div>
           <h1 className="text-xl font-bold tracking-tight">Something went wrong</h1>
-          <p className="mt-2 text-sm text-white/50 max-w-xs">
+          <p className="mt-2 text-sm text-[var(--text-secondary)] max-w-xs">
             {this.state.error?.message || "An unexpected error occurred in the application."}
           </p>
           <button
@@ -150,7 +154,7 @@ class AppErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState>
               this.setState({ hasError: false, error: undefined });
               window.location.reload();
             }}
-            className="mt-6 px-5 py-2.5 rounded-xl bg-white text-black text-sm font-semibold hover:bg-white/90 active:scale-95 transition"
+            className="mt-6 px-5 py-2.5 rounded-xl bg-[var(--btn-primary-bg)] text-[var(--btn-primary-text)] text-sm font-semibold hover:opacity-90 active:scale-95 transition"
           >
             Reload OneTap Reality
           </button>
@@ -161,7 +165,7 @@ class AppErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState>
   }
 }
 
-// Client-side image compression using Canvas for rapid mobile uploads
+// Client-side image compression using Canvas for fast mobile uploads
 async function compressImage(file: File, maxDimension = 1280, quality = 0.85): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!file.type.startsWith("image/")) {
@@ -213,14 +217,6 @@ async function compressImage(file: File, maxDimension = 1280, quality = 0.85): P
     };
     reader.readAsDataURL(file);
   });
-}
-
-function escapeICS(value: string) {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/;/g, "\\;")
-    .replace(/,/g, "\\,")
-    .replace(/\n/g, "\\n");
 }
 
 function parseEventDates(dateStr: string, timeStr: string) {
@@ -293,6 +289,9 @@ function parseEventDates(dateStr: string, timeStr: string) {
   const yyyymmdd = `${year}${pad(month + 1)}${pad(day)}`;
 
   return {
+    year,
+    month,
+    day,
     hasTime,
     yyyymmdd,
     dtstart: hasTime ? `${yyyymmdd}T${pad(hours)}${pad(minutes)}00` : yyyymmdd,
@@ -300,7 +299,54 @@ function parseEventDates(dateStr: string, timeStr: string) {
   };
 }
 
-function createCalendarFile(
+// PRIMARY Google Calendar Pre-Filled Event Link
+function openGoogleCalendar(
+  title: string,
+  dateStr: string,
+  timeStr: string,
+  description: string,
+  location: string
+) {
+  const { hasTime, yyyymmdd, dtstart, dtend, year, month, day } = parseEventDates(dateStr, timeStr);
+  
+  let datesParam = "";
+  if (hasTime) {
+    datesParam = `${dtstart}/${dtend}`;
+  } else {
+    // All-day event in Google Calendar format: end date is day + 1
+    const nextDay = new Date(year, month, day + 1);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const nextYmd = `${nextDay.getFullYear()}${pad(nextDay.getMonth() + 1)}${pad(nextDay.getDate())}`;
+    datesParam = `${yyyymmdd}/${nextYmd}`;
+  }
+
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: title || "Event",
+    dates: datesParam,
+  });
+
+  if (description && description.trim()) {
+    params.set("details", description.trim());
+  }
+  if (location && location.trim() && location !== "Not mentioned") {
+    params.set("location", location.trim());
+  }
+
+  const gCalUrl = `https://calendar.google.com/calendar/render?${params.toString()}`;
+  window.open(gCalUrl, "_blank", "noopener,noreferrer");
+}
+
+function escapeICS(value: string) {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\n/g, "\\n");
+}
+
+// SECONDARY .ics Calendar Download Fallback
+function downloadICSFile(
   title: string,
   dateStr: string,
   timeStr: string,
@@ -334,7 +380,7 @@ function createCalendarFile(
   if (description) {
     icsLines.push(`DESCRIPTION:${escapeICS(description)}`);
   }
-  if (location) {
+  if (location && location !== "Not mentioned") {
     icsLines.push(`LOCATION:${escapeICS(location)}`);
   }
   icsLines.push("STATUS:CONFIRMED");
@@ -437,6 +483,15 @@ function OneTapApp() {
   const [feedbackMessage, setFeedbackMessage] = useState<string>("");
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   
+  // Theme Management
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("onetap_theme") as ThemeMode | null;
+      if (saved) return saved;
+    }
+    return "dark";
+  });
+
   // Emergency Modal
   const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
   const [deviceLocation, setDeviceLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -467,6 +522,21 @@ function OneTapApp() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
 
+  function toggleTheme() {
+    const nextTheme: ThemeMode = themeMode === "dark" ? "light" : "dark";
+    setThemeMode(nextTheme);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("onetap_theme", nextTheme);
+      if (nextTheme === "light") {
+        document.documentElement.classList.remove("dark");
+        document.documentElement.classList.add("light");
+      } else {
+        document.documentElement.classList.remove("light");
+        document.documentElement.classList.add("dark");
+      }
+    }
+  }
+
   function saveScanToHistory(newAnalysis: Analysis, thumbDataUrl?: string) {
     try {
       const newItem: HistoryItem = {
@@ -483,7 +553,7 @@ function OneTapApp() {
       localStorage.setItem("onetap_scan_history", JSON.stringify(updated));
       window.dispatchEvent(new Event("storage"));
     } catch {
-      // Storage quota or parsing error
+      // Ignore
     }
   }
 
@@ -518,7 +588,7 @@ function OneTapApp() {
     }
 
     setStatus("loading");
-    setLoadingStep("1. Preparing & optimizing image...");
+    setLoadingStep("1. Optimizing image for mobile vision...");
     setErrorMessage("");
     setFeedbackMessage("");
     setAnalysis(null);
@@ -537,7 +607,7 @@ function OneTapApp() {
       }, 2000);
 
       const stepTimer2 = setTimeout(() => {
-        setLoadingStep("4. Synthesizing Safe Phone Actions...");
+        setLoadingStep("4. Synthesizing Verified Phone Actions...");
       }, 4500);
 
       const response = await fetch("/api/analyze", {
@@ -631,8 +701,9 @@ function OneTapApp() {
           const time = timeField.status !== "not_mentioned" ? timeField.value : "";
           const location = locField.status !== "not_mentioned" ? locField.value : "";
 
-          createCalendarFile(title, dateField.value, time, analysis.summary, location);
-          setFeedbackMessage(`✓ Added "${title}" to calendar.`);
+          // PRIMARY: Open Google Calendar with prefilled details
+          openGoogleCalendar(title, dateField.value, time, analysis.summary, location);
+          setFeedbackMessage(`✓ Opened Google Calendar for "${title}". Review and save.`);
           break;
         }
 
@@ -779,6 +850,7 @@ function OneTapApp() {
     setChatLoading(true);
 
     try {
+      // Send verified structured evidence (NO raw image) to prevent any hallucinations
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -788,7 +860,6 @@ function OneTapApp() {
           title: analysis.title,
           summary: analysis.summary,
           fields: analysis.fields,
-          image,
         }),
       });
 
@@ -862,51 +933,51 @@ function OneTapApp() {
   const getActionIcon = (type: ActionType) => {
     switch (type) {
       case "calendar":
-        return <Calendar className="w-5 h-5 text-emerald-400" />;
+        return <Calendar className="w-5 h-5 text-emerald-500 dark:text-emerald-400" />;
       case "maps":
-        return <MapPin className="w-5 h-5 text-sky-400" />;
+        return <MapPin className="w-5 h-5 text-sky-500 dark:text-sky-400" />;
       case "directions":
-        return <Compass className="w-5 h-5 text-teal-400" />;
+        return <Compass className="w-5 h-5 text-teal-500 dark:text-teal-400" />;
       case "call":
-        return <Phone className="w-5 h-5 text-green-400" />;
+        return <Phone className="w-5 h-5 text-green-500 dark:text-green-400" />;
       case "email":
-        return <Mail className="w-5 h-5 text-cyan-400" />;
+        return <Mail className="w-5 h-5 text-cyan-500 dark:text-cyan-400" />;
       case "website":
-        return <Globe className="w-5 h-5 text-blue-400" />;
+        return <Globe className="w-5 h-5 text-blue-500 dark:text-blue-400" />;
       case "translate":
-        return <Languages className="w-5 h-5 text-amber-400" />;
+        return <Languages className="w-5 h-5 text-amber-500 dark:text-amber-400" />;
       case "search":
-        return <Search className="w-5 h-5 text-yellow-400" />;
+        return <Search className="w-5 h-5 text-yellow-500 dark:text-yellow-400" />;
       case "copy":
-        return <Copy className="w-5 h-5 text-slate-300" />;
+        return <Copy className="w-5 h-5 text-slate-500 dark:text-slate-300" />;
       case "share":
-        return <Share2 className="w-5 h-5 text-indigo-400" />;
+        return <Share2 className="w-5 h-5 text-indigo-500 dark:text-indigo-400" />;
       case "emergency":
-        return <AlertTriangle className="w-5 h-5 text-red-400" />;
+        return <AlertTriangle className="w-5 h-5 text-red-500 dark:text-red-400" />;
       default:
-        return <Sparkles className="w-5 h-5 text-white/70" />;
+        return <Sparkles className="w-5 h-5 text-[var(--text-secondary)]" />;
     }
   };
 
   const renderFieldBadge = (field: ExtractedField) => {
     if (field.status === "verified") {
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-emerald-400">
-          <span className="w-1 h-1 rounded-full bg-emerald-400" />
+        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-emerald-600 dark:text-emerald-400">
+          <span className="w-1 h-1 rounded-full bg-emerald-500 dark:bg-emerald-400" />
           FROM IMAGE
         </span>
       );
     }
     if (field.status === "web_verified") {
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-sky-400">
-          <CheckCircle2 size={10} className="text-sky-400" />
+        <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/25 bg-sky-500/10 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-sky-600 dark:text-sky-400">
+          <CheckCircle2 size={10} className="text-sky-500 dark:text-sky-400" />
           WEB VERIFIED
         </span>
       );
     }
     return (
-      <span className="rounded-full border border-white/5 bg-white/[0.03] px-2 py-0.5 text-[9px] font-medium text-white/30">
+      <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--bg-pill)] px-2 py-0.5 text-[9px] font-medium text-[var(--text-muted)]">
         NOT MENTIONED
       </span>
     );
@@ -921,7 +992,7 @@ function OneTapApp() {
     : [];
 
   return (
-    <main className="min-h-screen bg-[#080808] text-white flex flex-col items-center justify-between">
+    <main className="min-h-screen bg-[var(--bg-app)] text-[var(--text-primary)] flex flex-col items-center justify-between transition-colors duration-200">
       {/* Hidden file inputs for Camera and Gallery */}
       <input
         ref={cameraInputRef}
@@ -929,6 +1000,7 @@ function OneTapApp() {
         accept="image/*"
         capture="environment"
         className="hidden"
+        aria-label="Camera capture input"
         onChange={handleImageChange}
       />
       <input
@@ -936,35 +1008,48 @@ function OneTapApp() {
         type="file"
         accept="image/*"
         className="hidden"
+        aria-label="Gallery file input"
         onChange={handleImageChange}
       />
 
       <div className="w-full max-w-md flex min-h-screen flex-col px-5 pb-8 pt-6">
         {/* Top Header */}
-        <header className="flex items-center justify-between pb-4 border-b border-white/[0.06]">
+        <header className="flex items-center justify-between pb-4 border-b border-[var(--border-subtle)]">
           <div>
             <div className="flex items-center gap-2">
-              <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-white/50">
+              <span className="inline-block w-2 h-2 rounded-full bg-[var(--accent-emerald)] animate-pulse" />
+              <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-[var(--text-muted)]">
                 iQOO Vision AI
               </p>
             </div>
-            <h1 className="mt-0.5 text-lg font-bold tracking-tight bg-gradient-to-r from-white via-white/90 to-white/60 bg-clip-text text-transparent">
+            <h1 className="mt-0.5 text-lg font-bold tracking-tight bg-gradient-to-r from-[var(--text-primary)] via-[var(--text-primary)] to-[var(--text-secondary)] bg-clip-text text-transparent">
               OneTap Reality
             </h1>
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Theme Toggle Button */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] transition active:scale-95"
+              title={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`}
+              aria-label="Toggle theme mode"
+            >
+              {themeMode === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+            </button>
+
             {/* Scan History Button */}
             <button
               type="button"
               onClick={() => setHistoryOpen(true)}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/70 hover:bg-white/[0.08] hover:text-white transition active:scale-95 relative"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] transition active:scale-95 relative"
               title="Recent Scans"
+              aria-label="Recent Scans history"
             >
               <History size={15} />
               {historyItems.length > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[var(--accent-emerald)]" />
               )}
             </button>
 
@@ -972,8 +1057,9 @@ function OneTapApp() {
               <button
                 type="button"
                 onClick={reset}
-                className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/70 hover:bg-white/[0.08] hover:text-white transition active:scale-95"
-                title="Reset scene"
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] transition active:scale-95"
+                title="Scan something else"
+                aria-label="Reset scene"
               >
                 <RefreshCw size={15} />
               </button>
@@ -983,11 +1069,12 @@ function OneTapApp() {
 
         {/* Feedback Message Toast */}
         {feedbackMessage && (
-          <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-950/40 px-4 py-3 text-xs text-emerald-200 flex items-center justify-between shadow-lg backdrop-blur-md">
+          <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-800 dark:text-emerald-200 flex items-center justify-between shadow-lg backdrop-blur-md animate-fade-in">
             <span>{feedbackMessage}</span>
             <button
               onClick={() => setFeedbackMessage("")}
-              className="text-emerald-400 hover:text-emerald-200 ml-2"
+              className="text-emerald-600 dark:text-emerald-400 hover:opacity-80 ml-2"
+              aria-label="Dismiss message"
             >
               <X size={14} />
             </button>
@@ -996,17 +1083,17 @@ function OneTapApp() {
 
         {/* Error Alert */}
         {status === "error" && errorMessage && (
-          <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-950/40 p-5 text-xs text-red-200 shadow-lg backdrop-blur-md">
+          <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-5 text-xs text-red-800 dark:text-red-200 shadow-lg backdrop-blur-md">
             <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
               <div className="flex-1">
-                <p className="font-semibold text-sm text-red-100">
+                <p className="font-semibold text-sm text-red-900 dark:text-red-100">
                   Could not understand this image.
                 </p>
-                <p className="mt-1 text-red-300/90 leading-relaxed">
+                <p className="mt-1 text-red-700 dark:text-red-300 leading-relaxed">
                   {errorMessage}
                 </p>
-                <p className="mt-1 text-red-400/80 font-medium">
+                <p className="mt-1 text-red-600 dark:text-red-400 font-medium">
                   Try another photo or clearer angle.
                 </p>
               </div>
@@ -1014,7 +1101,7 @@ function OneTapApp() {
             <button
               type="button"
               onClick={reset}
-              className="mt-4 w-full flex items-center justify-center gap-2 rounded-xl bg-white/10 hover:bg-white/15 py-2.5 text-xs font-semibold text-white transition"
+              className="mt-4 w-full flex items-center justify-center gap-2 rounded-xl bg-[var(--bg-pill)] hover:bg-[var(--bg-card-hover)] py-2.5 text-xs font-semibold text-[var(--text-primary)] transition"
             >
               <RefreshCw size={13} />
               <span>Scan something else</span>
@@ -1028,15 +1115,15 @@ function OneTapApp() {
           {status === "idle" && (
             <div className="flex flex-col items-center text-center">
               <div className="my-8">
-                <p className="text-4xl font-extrabold leading-[1.05] tracking-[-0.04em] text-white">
+                <p className="text-4xl font-extrabold leading-[1.05] tracking-[-0.04em] text-[var(--text-primary)]">
                   SEE IT.
                   <br />
                   UNDERSTAND IT.
                   <br />
-                  <span className="text-white/40">DO SOMETHING.</span>
+                  <span className="text-[var(--text-muted)]">DO SOMETHING.</span>
                 </p>
 
-                <p className="mt-4 text-xs leading-6 text-white/50 max-w-xs mx-auto">
+                <p className="mt-4 text-xs leading-6 text-[var(--text-secondary)] max-w-xs mx-auto">
                   Point your phone at the physical world. AI extracts verified facts,
                   verifies missing data, and generates instant phone actions.
                 </p>
@@ -1047,17 +1134,17 @@ function OneTapApp() {
                 <button
                   type="button"
                   onClick={triggerCamera}
-                  className="group relative w-full flex flex-col items-center justify-center rounded-[2rem] border border-white/15 bg-gradient-to-b from-white/[0.08] to-white/[0.02] p-8 shadow-2xl transition hover:border-white/30 hover:from-white/[0.12] active:scale-[0.98]"
+                  className="group relative w-full flex flex-col items-center justify-center rounded-[2rem] border border-[var(--border-medium)] bg-[var(--bg-card)] p-8 shadow-xl transition hover:border-[var(--accent-emerald)] hover:bg-[var(--bg-card-hover)] active:scale-[0.98]"
                 >
-                  <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-white text-black shadow-xl transition group-hover:scale-105 group-active:scale-95">
+                  <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-[var(--btn-primary-bg)] text-[var(--btn-primary-text)] shadow-xl transition group-hover:scale-105 group-active:scale-95">
                     <Camera size={34} strokeWidth={2} />
                   </div>
 
-                  <span className="text-base font-semibold tracking-tight text-white">
+                  <span className="text-base font-semibold tracking-tight text-[var(--text-primary)]">
                     Point &amp; Capture
                   </span>
 
-                  <span className="mt-1 text-[11px] text-white/40">
+                  <span className="mt-1 text-[11px] text-[var(--text-muted)]">
                     Opens device camera
                   </span>
                 </button>
@@ -1066,7 +1153,7 @@ function OneTapApp() {
                 <button
                   type="button"
                   onClick={triggerUpload}
-                  className="w-full flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] py-3.5 text-xs font-medium text-white/70 hover:bg-white/[0.06] hover:text-white transition active:scale-[0.99]"
+                  className="w-full flex items-center justify-center gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] py-3.5 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] transition active:scale-[0.99]"
                 >
                   <Upload size={14} />
                   <span>Choose from Gallery / Files</span>
@@ -1074,7 +1161,7 @@ function OneTapApp() {
               </div>
 
               {/* Trust Badge */}
-              <div className="mt-8 flex items-center justify-center gap-2 text-[11px] text-white/35">
+              <div className="mt-8 flex items-center justify-center gap-2 text-[11px] text-[var(--text-muted)]">
                 <Info size={13} />
                 <span>Zero hallucinations — Verified evidence only</span>
               </div>
@@ -1085,7 +1172,7 @@ function OneTapApp() {
           {(status === "loading" || status === "success") && (
             <div className="space-y-5">
               {/* Image Preview Container */}
-              <div className="relative aspect-[4/5] w-full overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.02] shadow-2xl">
+              <div className="relative aspect-[4/5] w-full overflow-hidden rounded-[2rem] border border-[var(--border-subtle)] bg-[var(--bg-card-subtle)] shadow-2xl">
                 {image && (
                   /* eslint-disable-next-line @next/next/no-img-element */
                   <img
@@ -1097,7 +1184,7 @@ function OneTapApp() {
 
                 {/* Processing Overlay with Dynamic Step Progress */}
                 {status === "loading" && (
-                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md px-6 text-center">
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md px-6 text-center text-white">
                     <div className="relative flex items-center justify-center">
                       <div className="h-14 w-14 animate-spin rounded-full border-2 border-white/20 border-t-white" />
                       <Sparkles className="absolute w-5 h-5 text-white animate-pulse" />
@@ -1112,7 +1199,7 @@ function OneTapApp() {
                       <span>{loadingStep}</span>
                     </div>
 
-                    <p className="mt-3 text-[11px] text-white/40 max-w-xs leading-relaxed">
+                    <p className="mt-3 text-[11px] text-white/50 max-w-xs leading-relaxed">
                       Zero-hallucination engine: verifying field evidence and web grounding.
                     </p>
                   </div>
@@ -1121,40 +1208,40 @@ function OneTapApp() {
 
               {/* SUCCESS RESULTS VIEW */}
               {status === "success" && analysis && (
-                <div className="space-y-5">
+                <div className="space-y-5 animate-fade-in">
                   {/* Summary Card */}
-                  <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.035] p-5 backdrop-blur-md">
+                  <div className="rounded-[1.75rem] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5 backdrop-blur-md shadow-sm">
                     <div className="mb-2.5 flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-1.5">
-                        <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/80">
+                        <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--bg-pill)] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
                           {analysis.context.replace(/_/g, " ")}
                         </span>
                         {analysis.webGroundingUsed && (
-                          <span className="rounded-full border border-sky-500/30 bg-sky-950/40 px-2 py-0.5 text-[9px] font-semibold text-sky-300 flex items-center gap-1">
+                          <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[9px] font-semibold text-sky-600 dark:text-sky-400 flex items-center gap-1">
                             <CheckCircle2 size={10} /> Web Grounded
                           </span>
                         )}
                       </div>
 
-                      <span className="text-[10px] font-medium text-emerald-400/90 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                      <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
                         {Math.round(analysis.confidence * 100)}% Confidence
                       </span>
                     </div>
 
-                    <h2 className="text-xl font-bold tracking-tight text-white">
+                    <h2 className="text-xl font-bold tracking-tight text-[var(--text-primary)]">
                       {analysis.title}
                     </h2>
 
-                    <p className="mt-2 text-xs leading-5 text-white/60">
+                    <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">
                       {analysis.summary}
                     </p>
 
                     {/* Multilingual Translation Alert if detected */}
                     {analysis.languageDetected && analysis.languageDetected.code !== "en" && (
-                      <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-950/30 p-3 text-xs text-amber-200 flex items-center justify-between">
+                      <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <Languages size={14} className="text-amber-400 shrink-0" />
+                          <Languages size={14} className="text-amber-500 shrink-0" />
                           <span className="text-[11px]">
                             Detected: <strong>{analysis.languageDetected.name}</strong>
                           </span>
@@ -1162,7 +1249,7 @@ function OneTapApp() {
                         <button
                           type="button"
                           onClick={() => setTranslationModalOpen(true)}
-                          className="rounded-lg bg-amber-500/20 px-2 py-1 text-[10px] font-semibold text-amber-300 hover:bg-amber-500/30 transition"
+                          className="rounded-lg bg-amber-500/20 px-2 py-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition"
                         >
                           View Translation
                         </button>
@@ -1171,15 +1258,15 @@ function OneTapApp() {
                   </div>
 
                   {/* FIELD-LEVEL EVIDENCE & VERIFICATION CARD */}
-                  <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.025] p-5">
+                  <div className="rounded-[1.75rem] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5 shadow-sm">
                     <div className="mb-3.5 flex items-center justify-between">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/40">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-muted)]">
                         Field Evidence &amp; Verification
                       </p>
                       <button
                         type="button"
                         onClick={() => setShowAllFields(!showAllFields)}
-                        className="text-[10px] text-white/40 hover:text-white/80 transition"
+                        className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition"
                       >
                         {showAllFields ? "Show Verified Only" : "Show All Fields"}
                       </button>
@@ -1193,20 +1280,20 @@ function OneTapApp() {
                           return (
                             <div
                               key={key}
-                              className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-2.5 transition"
+                              className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card-subtle)] p-2.5 transition"
                             >
                               <div className="flex items-center justify-between mb-1">
-                                <span className="text-white/40 flex items-center gap-1.5 text-[11px]">
-                                  <IconComp size={12} className="text-white/60" />
+                                <span className="text-[var(--text-secondary)] flex items-center gap-1.5 text-[11px]">
+                                  <IconComp size={12} className="text-[var(--text-muted)]" />
                                   {FIELD_LABELS[key]?.label || key}
                                 </span>
                                 {renderFieldBadge(field)}
                               </div>
-                              <p className="text-sm font-semibold text-white/95 break-words">
+                              <p className="text-sm font-semibold text-[var(--text-primary)] break-words">
                                 {field.value}
                               </p>
                               {field.sourceCitation && (
-                                <p className="mt-1 text-[10px] text-sky-400/70 font-mono">
+                                <p className="mt-1 text-[10px] text-sky-600 dark:text-sky-400 font-mono">
                                   Source: {field.sourceCitation}
                                 </p>
                               )}
@@ -1214,14 +1301,14 @@ function OneTapApp() {
                           );
                         })
                       ) : (
-                        <p className="text-xs text-white/40 py-2">
+                        <p className="text-xs text-[var(--text-muted)] py-2">
                           No specific verified entities detected in this image.
                         </p>
                       )}
 
                       {/* Optional All Fields List */}
                       {showAllFields && unmentionedFieldsList.length > 0 && (
-                        <div className="pt-2 border-t border-white/[0.04] space-y-1.5 opacity-60">
+                        <div className="pt-2 border-t border-[var(--border-subtle)] space-y-1.5 opacity-60">
                           {unmentionedFieldsList.map(([key, field]) => {
                             const IconComp = FIELD_LABELS[key]?.icon || Sparkles;
                             return (
@@ -1229,7 +1316,7 @@ function OneTapApp() {
                                 key={key}
                                 className="flex items-center justify-between py-1 px-1 text-[11px]"
                               >
-                                <span className="text-white/30 flex items-center gap-1.5">
+                                <span className="text-[var(--text-muted)] flex items-center gap-1.5">
                                   <IconComp size={11} /> {FIELD_LABELS[key]?.label || key}
                                 </span>
                                 {renderFieldBadge(field)}
@@ -1243,72 +1330,103 @@ function OneTapApp() {
 
                   {/* SMART ACTIONS SECTION */}
                   <div>
-                    <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/40">
+                    <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-muted)]">
                       Suggested Actions ({analysis.actions.length})
                     </p>
 
                     {analysis.actions.length > 0 ? (
                       <div className="space-y-2.5">
                         {analysis.actions.map((action) => (
-                          <button
-                            key={action.id}
-                            type="button"
-                            onClick={() => handleAction(action)}
-                            disabled={actionLoadingId !== null}
-                            className="group flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-left transition hover:border-white/20 hover:bg-white/[0.08] active:scale-[0.99] disabled:opacity-60"
-                          >
-                            <div className="flex items-center gap-3.5">
-                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04]">
-                                {getActionIcon(action.type)}
+                          <div key={action.id} className="relative group">
+                            <button
+                              type="button"
+                              onClick={() => handleAction(action)}
+                              disabled={actionLoadingId !== null}
+                              className="flex w-full items-center justify-between rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 text-left transition hover:border-[var(--border-medium)] hover:bg-[var(--bg-card-hover)] active:scale-[0.99] disabled:opacity-60 shadow-sm"
+                            >
+                              <div className="flex items-center gap-3.5">
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-pill)]">
+                                  {getActionIcon(action.type)}
+                                </div>
+
+                                <div>
+                                  <p className="text-sm font-semibold text-[var(--text-primary)]">
+                                    {actionLoadingId === action.id
+                                      ? "Executing..."
+                                      : action.label}
+                                  </p>
+                                  <p className="mt-0.5 text-[11px] text-[var(--text-secondary)] leading-snug">
+                                    {action.description}
+                                  </p>
+                                </div>
                               </div>
 
-                              <div>
-                                <p className="text-sm font-semibold text-white">
-                                  {actionLoadingId === action.id
-                                    ? "Executing..."
-                                    : action.label}
-                                </p>
-                                <p className="mt-0.5 text-[11px] text-white/40 leading-snug">
-                                  {action.description}
-                                </p>
-                              </div>
-                            </div>
+                              <ChevronRight className="w-4 h-4 text-[var(--text-muted)] transition group-hover:text-[var(--text-primary)] group-hover:translate-x-0.5" />
+                            </button>
 
-                            <ChevronRight className="w-4 h-4 text-white/30 transition group-hover:text-white group-hover:translate-x-0.5" />
-                          </button>
+                            {/* Secondary Download .ics button when action is Calendar */}
+                            {action.type === "calendar" && (
+                              <div className="mt-1.5 flex justify-end px-2">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const dateField = analysis.fields.date;
+                                    const timeField = analysis.fields.time;
+                                    const locField = analysis.fields.location;
+                                    const titleField = analysis.fields.eventTitle;
+                                    const title = titleField.status !== "not_mentioned" && titleField.value ? titleField.value : analysis.title;
+                                    const time = timeField.status !== "not_mentioned" ? timeField.value : "";
+                                    const location = locField.status !== "not_mentioned" ? locField.value : "";
+                                    downloadICSFile(title, dateField.value, time, analysis.summary, location);
+                                    setFeedbackMessage(`✓ Downloaded ${title}.ics calendar file.`);
+                                  }}
+                                  className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center gap-1 transition"
+                                >
+                                  <Download size={11} /> Download .ics file fallback
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         ))}
                       </div>
                     ) : (
-                      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5 text-center">
-                        <p className="text-sm font-medium text-white/80">
+                      <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5 text-center">
+                        <p className="text-sm font-medium text-[var(--text-primary)]">
                           No sensitive actions detected
                         </p>
-                        <p className="mt-1 text-xs text-white/40">
+                        <p className="mt-1 text-xs text-[var(--text-muted)]">
                           No verifiable dates, numbers, or locations were visible.
                         </p>
                       </div>
                     )}
                   </div>
 
-                  {/* NATURAL LANGUAGE FOLLOW-UP ("ASK ABOUT THIS") */}
-                  <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.03] p-5 backdrop-blur-md">
+                  {/* NATURAL LANGUAGE FOLLOW-UP ("ASK ABOUT THIS SCENE") */}
+                  <div className="rounded-[1.75rem] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5 backdrop-blur-md shadow-sm">
                     <div className="flex items-center gap-2 mb-3">
-                      <MessageSquare size={14} className="text-white/60" />
-                      <p className="text-xs font-semibold uppercase tracking-wider text-white/70">
+                      <MessageSquare size={14} className="text-[var(--text-secondary)]" />
+                      <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-primary)]">
                         Ask about this scene
                       </p>
                     </div>
 
                     {/* Quick Suggestion Chips */}
                     <div className="flex flex-wrap gap-1.5 mb-3">
-                      {["What time does this start?", "Where is this located?", "Translate this", "Summarize key points"].map((chip) => (
+                      {[
+                        "What time does this start?",
+                        "Where is this located?",
+                        "Translate this to Hindi",
+                        "Translate this to Spanish",
+                        "Summarize key points",
+                      ].map((chip) => (
                         <button
                           key={chip}
                           type="button"
                           onClick={() => {
                             setChatInput(chip);
                           }}
-                          className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] text-white/60 hover:bg-white/10 hover:text-white transition"
+                          className="rounded-full border border-[var(--border-subtle)] bg-[var(--bg-pill)] px-2.5 py-1 text-[10px] text-[var(--text-secondary)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] transition"
                         >
                           {chip}
                         </button>
@@ -1323,11 +1441,11 @@ function OneTapApp() {
                             key={msg.id}
                             className={`rounded-xl p-2.5 text-xs ${
                               msg.sender === "user"
-                                ? "bg-white/10 text-white ml-6 border border-white/10"
-                                : "bg-white/[0.04] text-white/80 mr-6 border border-white/5"
+                                ? "bg-[var(--bg-pill)] text-[var(--text-primary)] ml-6 border border-[var(--border-subtle)]"
+                                : "bg-[var(--bg-card-subtle)] text-[var(--text-secondary)] mr-6 border border-[var(--border-subtle)]"
                             }`}
                           >
-                            <p className="font-semibold text-[10px] text-white/40 mb-0.5">
+                            <p className="font-semibold text-[10px] text-[var(--text-muted)] mb-0.5">
                               {msg.sender === "user" ? "You" : "OneTap Assistant"}
                             </p>
                             <p className="leading-relaxed">{msg.text}</p>
@@ -1342,17 +1460,18 @@ function OneTapApp() {
                         type="text"
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
-                        placeholder="Ask anything about what's visible..."
+                        placeholder="Ask anything about verified facts or translate..."
                         disabled={chatLoading}
-                        className="flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-xs text-white placeholder-white/30 focus:border-white/30 focus:outline-none"
+                        className="flex-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card-subtle)] px-3.5 py-2.5 text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:border-[var(--accent-emerald)] focus:outline-none"
                       />
                       <button
                         type="submit"
                         disabled={!chatInput.trim() || chatLoading}
-                        className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-black disabled:opacity-40 transition active:scale-95 shrink-0"
+                        aria-label="Send message"
+                        className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--btn-primary-bg)] text-[var(--btn-primary-text)] disabled:opacity-40 transition active:scale-95 shrink-0"
                       >
                         {chatLoading ? (
-                          <div className="w-3.5 h-3.5 rounded-full border-2 border-black/30 border-t-black animate-spin" />
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--btn-primary-text)]/30 border-t-[var(--btn-primary-text)] animate-spin" />
                         ) : (
                           <Send size={14} />
                         )}
@@ -1360,12 +1479,12 @@ function OneTapApp() {
                     </form>
                   </div>
 
-                  {/* Scan Another Button */}
+                  {/* Scan Another / Scan Something Else Button */}
                   <div className="pt-2">
                     <button
                       type="button"
                       onClick={reset}
-                      className="w-full flex items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.05] py-3.5 text-xs font-semibold text-white hover:bg-white/10 active:scale-[0.99] transition"
+                      className="w-full flex items-center justify-center gap-2 rounded-2xl border border-[var(--border-medium)] bg-[var(--bg-card)] py-3.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] active:scale-[0.99] transition shadow-sm"
                     >
                       <Camera size={14} />
                       <span>Scan something else</span>
@@ -1379,39 +1498,40 @@ function OneTapApp() {
 
         {/* Translation Modal */}
         {translationModalOpen && analysis?.languageDetected && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
-            <div className="w-full max-w-sm rounded-[2rem] border border-amber-500/30 bg-[#121008] p-6 shadow-2xl">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-bg)] p-4 backdrop-blur-md">
+            <div className="w-full max-w-sm rounded-[2rem] border border-amber-500/30 bg-[var(--modal-bg)] p-6 shadow-2xl text-[var(--text-primary)]">
               <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2 text-amber-400">
+                <div className="flex items-center gap-2 text-amber-500">
                   <Languages size={20} />
-                  <h3 className="text-base font-bold text-white">
+                  <h3 className="text-base font-bold text-[var(--text-primary)]">
                     {analysis.languageDetected.name} Translation
                   </h3>
                 </div>
                 <button
                   onClick={() => setTranslationModalOpen(false)}
-                  className="text-white/40 hover:text-white"
+                  className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  aria-label="Close translation"
                 >
                   <X size={16} />
                 </button>
               </div>
 
               {analysis.languageDetected.originalSnippet && (
-                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs mb-3">
-                  <p className="text-[10px] uppercase font-semibold text-white/40 mb-1">
+                <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card-subtle)] p-3 text-xs mb-3">
+                  <p className="text-[10px] uppercase font-semibold text-[var(--text-muted)] mb-1">
                     Original ({analysis.languageDetected.name})
                   </p>
-                  <p className="text-white/80 leading-relaxed italic">
+                  <p className="text-[var(--text-secondary)] leading-relaxed italic">
                     &ldquo;{analysis.languageDetected.originalSnippet}&rdquo;
                   </p>
                 </div>
               )}
 
-              <div className="rounded-xl border border-amber-500/20 bg-amber-950/20 p-3 text-xs">
-                <p className="text-[10px] uppercase font-semibold text-amber-400/80 mb-1">
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs">
+                <p className="text-[10px] uppercase font-semibold text-amber-600 dark:text-amber-400 mb-1">
                   English Translation
                 </p>
-                <p className="text-white font-medium leading-relaxed">
+                <p className="font-medium leading-relaxed">
                   {analysis.languageDetected.translatedEnglish}
                 </p>
               </div>
@@ -1419,7 +1539,7 @@ function OneTapApp() {
               <button
                 type="button"
                 onClick={() => setTranslationModalOpen(false)}
-                className="mt-5 w-full rounded-xl bg-white text-black py-2.5 text-xs font-semibold hover:bg-white/90 transition"
+                className="mt-5 w-full rounded-xl bg-[var(--btn-primary-bg)] text-[var(--btn-primary-text)] py-2.5 text-xs font-semibold hover:opacity-90 transition"
               >
                 Close
               </button>
@@ -1429,16 +1549,17 @@ function OneTapApp() {
 
         {/* Scan History Modal */}
         {historyOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
-            <div className="w-full max-w-sm rounded-[2rem] border border-white/15 bg-[#0f0f0f] p-6 shadow-2xl max-h-[80vh] flex flex-col">
-              <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/[0.06]">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-bg)] p-4 backdrop-blur-md">
+            <div className="w-full max-w-sm rounded-[2rem] border border-[var(--border-medium)] bg-[var(--modal-bg)] p-6 shadow-2xl max-h-[80vh] flex flex-col text-[var(--text-primary)]">
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-[var(--border-subtle)]">
                 <div className="flex items-center gap-2">
-                  <History size={18} className="text-emerald-400" />
-                  <h3 className="text-base font-bold text-white">Recent Scans</h3>
+                  <History size={18} className="text-[var(--accent-emerald)]" />
+                  <h3 className="text-base font-bold">Recent Scans</h3>
                 </div>
                 <button
                   onClick={() => setHistoryOpen(false)}
-                  className="text-white/40 hover:text-white"
+                  className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  aria-label="Close history"
                 >
                   <X size={16} />
                 </button>
@@ -1452,31 +1573,31 @@ function OneTapApp() {
                       key={item.id}
                       type="button"
                       onClick={() => loadHistoryItem(item)}
-                      className="w-full text-left rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 hover:bg-white/[0.06] hover:border-white/15 transition group"
+                      className="w-full text-left rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card-subtle)] p-3 hover:bg-[var(--bg-card-hover)] hover:border-[var(--border-medium)] transition group"
                     >
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-[9px] uppercase font-semibold text-white/50 bg-white/5 px-2 py-0.5 rounded-full">
+                        <span className="text-[9px] uppercase font-semibold text-[var(--text-muted)] bg-[var(--bg-pill)] px-2 py-0.5 rounded-full">
                           {item.context.replace(/_/g, " ")}
                         </span>
-                        <span className="text-[10px] text-white/30">
+                        <span className="text-[10px] text-[var(--text-muted)]">
                           {new Date(item.timestamp).toLocaleDateString([], {
                             month: "short",
                             day: "numeric",
                           })}
                         </span>
                       </div>
-                      <p className="text-xs font-semibold text-white group-hover:text-emerald-400 transition">
+                      <p className="text-xs font-semibold text-[var(--text-primary)] group-hover:text-[var(--accent-emerald)] transition">
                         {item.title}
                       </p>
-                      <p className="text-[11px] text-white/50 line-clamp-1 mt-0.5">
+                      <p className="text-[11px] text-[var(--text-secondary)] line-clamp-1 mt-0.5">
                         {item.summary}
                       </p>
                     </button>
                   ))
                 ) : (
-                  <div className="text-center py-8 text-white/40 text-xs">
+                  <div className="text-center py-8 text-[var(--text-muted)] text-xs">
                     <p>No recent scans saved yet.</p>
-                    <p className="mt-1 text-[11px] text-white/25">
+                    <p className="mt-1 text-[11px] opacity-70">
                       Scans are stored securely on this device.
                     </p>
                   </div>
@@ -1484,18 +1605,18 @@ function OneTapApp() {
               </div>
 
               {historyItems.length > 0 && (
-                <div className="pt-4 mt-2 border-t border-white/[0.06] flex gap-2">
+                <div className="pt-4 mt-2 border-t border-[var(--border-subtle)] flex gap-2">
                   <button
                     type="button"
                     onClick={clearHistory}
-                    className="flex-1 rounded-xl border border-red-500/20 bg-red-950/20 py-2 text-xs font-semibold text-red-300 hover:bg-red-950/40 transition flex items-center justify-center gap-1.5"
+                    className="flex-1 rounded-xl border border-red-500/20 bg-red-500/10 py-2 text-xs font-semibold text-red-600 dark:text-red-300 hover:bg-red-500/20 transition flex items-center justify-center gap-1.5"
                   >
                     <Trash2 size={13} /> Clear History
                   </button>
                   <button
                     type="button"
                     onClick={() => setHistoryOpen(false)}
-                    className="flex-1 rounded-xl bg-white/10 py-2 text-xs font-semibold text-white hover:bg-white/15 transition"
+                    className="flex-1 rounded-xl bg-[var(--bg-pill)] py-2 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition"
                   >
                     Close
                   </button>
@@ -1507,26 +1628,26 @@ function OneTapApp() {
 
         {/* Emergency Modal Workflow */}
         {emergencyModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
-            <div className="w-full max-w-sm rounded-[2rem] border border-red-500/30 bg-[#120808] p-6 shadow-2xl">
-              <div className="flex items-center gap-3 text-red-400 mb-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-bg)] p-4 backdrop-blur-md">
+            <div className="w-full max-w-sm rounded-[2rem] border border-red-500/30 bg-[var(--modal-bg)] p-6 shadow-2xl text-[var(--text-primary)]">
+              <div className="flex items-center gap-3 text-red-500 mb-4">
                 <ShieldAlert size={26} />
-                <h3 className="text-base font-bold text-white">
+                <h3 className="text-base font-bold">
                   Emergency Assistant (Prototype)
                 </h3>
               </div>
 
-              <p className="text-xs text-white/70 leading-relaxed">
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
                 This is an iQOO Hackathon prototype safety assistant. It does{" "}
-                <strong className="text-white">NOT</strong> automatically contact
+                <strong className="text-[var(--text-primary)]">NOT</strong> automatically contact
                 police or medical services.
               </p>
 
-              <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs">
-                <p className="font-semibold text-white/90">
+              <div className="mt-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card-subtle)] p-3 text-xs">
+                <p className="font-semibold">
                   {analysis?.title || "Incident detected"}
                 </p>
-                <p className="mt-1 text-white/50 text-[11px]">
+                <p className="mt-1 text-[var(--text-muted)] text-[11px]">
                   {analysis?.summary}
                 </p>
               </div>
@@ -1534,11 +1655,11 @@ function OneTapApp() {
               {/* Device Location Section */}
               <div className="mt-4 space-y-2">
                 {deviceLocation ? (
-                  <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/30 p-3 text-xs text-emerald-200">
+                  <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-800 dark:text-emerald-200">
                     <p className="font-semibold flex items-center gap-1.5">
                       <Check size={14} /> Device Coordinates Verified
                     </p>
-                    <p className="mt-1 text-[11px] font-mono text-emerald-300/80">
+                    <p className="mt-1 text-[11px] font-mono">
                       {deviceLocation.lat.toFixed(5)}, {deviceLocation.lng.toFixed(5)}
                     </p>
                   </div>
@@ -1547,7 +1668,7 @@ function OneTapApp() {
                     type="button"
                     onClick={requestEmergencyLocation}
                     disabled={locationLoading}
-                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 py-2.5 text-xs font-semibold text-white hover:bg-white/15 transition"
+                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-[var(--border-medium)] bg-[var(--bg-pill)] py-2.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition"
                   >
                     <MapPin size={14} />
                     <span>
@@ -1575,7 +1696,7 @@ function OneTapApp() {
                 <button
                   type="button"
                   onClick={() => setEmergencyModalOpen(false)}
-                  className="w-full rounded-xl border border-white/10 py-2.5 text-xs font-medium text-white/60 hover:text-white transition"
+                  className="w-full rounded-xl border border-[var(--border-subtle)] py-2.5 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] transition"
                 >
                   Dismiss
                 </button>
@@ -1585,8 +1706,8 @@ function OneTapApp() {
         )}
 
         {/* Footer */}
-        <footer className="pt-4 text-center border-t border-white/[0.04]">
-          <p className="text-[10px] uppercase tracking-[0.25em] text-white/25">
+        <footer className="pt-4 text-center border-t border-[var(--border-subtle)]">
+          <p className="text-[10px] uppercase tracking-[0.25em] text-[var(--text-muted)]">
             See → Understand → Verify → Act
           </p>
         </footer>

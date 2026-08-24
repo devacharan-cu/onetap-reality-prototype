@@ -4,13 +4,21 @@ import { z } from "zod";
 
 export const runtime = "nodejs";
 
+const fieldSchema = z.object({
+  value: z.string().default("Not mentioned"),
+  status: z.enum(["verified", "web_verified", "not_mentioned", "uncertain"]).default("not_mentioned"),
+  source: z.enum(["image", "web", "none"]).default("none"),
+  confidence: z.number().default(1.0),
+  evidence: z.string().optional(),
+  sourceCitation: z.string().optional(),
+});
+
 const chatRequestSchema = z.object({
   message: z.string().min(1, "Question cannot be empty"),
   context: z.string().default("general"),
   title: z.string().default("Visual Subject"),
   summary: z.string().default(""),
-  fields: z.record(z.string(), z.unknown()).default({}),
-  image: z.string().optional(),
+  fields: z.record(z.string(), fieldSchema).default({}),
 });
 
 export async function POST(req: NextRequest) {
@@ -33,49 +41,78 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { message, context, title, summary, fields, image } = parsedBody.data;
+    const { message, context, title, summary, fields } = parsedBody.data;
 
-    const ai = new GoogleGenAI({ apiKey });
+    // Categorize fields into Verified (Image), Verified (Web), and Not Mentioned
+    const verifiedImageFields: Array<{ name: string; value: string; evidence?: string }> = [];
+    const verifiedWebFields: Array<{ name: string; value: string; citation?: string }> = [];
+    const notMentionedFields: string[] = [];
 
-    const prompt = `You are OneTap Reality Assistant (iQOO Hackathon 2026).
-The user is asking a follow-up question about an image they just scanned with their phone.
-
-SCENE CONTEXT:
-- Context Type: ${context}
-- Subject Title: ${title}
-- Visual Summary: ${summary}
-- Extracted Fields: ${JSON.stringify(fields, null, 2)}
-
-USER QUESTION: "${message}"
-
-CRITICAL RULES:
-1. Answer strictly based on the visible image and verified scene facts above.
-2. If the user asks for a detail (e.g. price, time, contact, address) that is NOT present or marked "Not mentioned":
-   State clearly: "This information is not mentioned in the image and could not be verified."
-3. NEVER invent or hallucinate facts, dates, prices, or numbers.
-4. Keep the answer direct, concise, and phone-friendly (1-3 sentences max).
-5. If the user asks to translate, provide a direct translation of the visible content.`;
-
-    const contents: Array<{
-      text?: string;
-      inlineData?: { mimeType: string; data: string };
-    }> = [];
-
-    if (image && image.startsWith("data:image/")) {
-      const match = image.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
-      if (match) {
-        contents.push({
-          inlineData: {
-            mimeType: match[1],
-            data: match[2],
-          },
+    for (const [fieldName, field] of Object.entries(fields)) {
+      if (field.status === "verified" && field.source === "image" && field.value !== "Not mentioned") {
+        verifiedImageFields.push({
+          name: fieldName,
+          value: field.value,
+          evidence: field.evidence,
         });
+      } else if (field.status === "web_verified" && field.value !== "Not mentioned") {
+        verifiedWebFields.push({
+          name: fieldName,
+          value: field.value,
+          citation: field.sourceCitation || "Web Grounding",
+        });
+      } else {
+        notMentionedFields.push(fieldName);
       }
     }
 
-    contents.push({ text: prompt });
+    const ai = new GoogleGenAI({ apiKey });
 
-    const modelsToTry = ["gemini-3.7-flash", "gemini-3.6-flash"];
+    const systemPrompt = `You are the Zero-Hallucination Assistant for OneTap Reality (iQOO Hackathon 2026).
+You are answering a user inquiry about a verified visual scene scanned on their phone.
+
+STRUCTURED VERIFIED EVIDENCE:
+- Context Type: ${context}
+- Subject Title: ${title}
+- Visual Summary: ${summary}
+
+VERIFIED FACTS (FROM IMAGE ONLY):
+${
+  verifiedImageFields.length > 0
+    ? verifiedImageFields.map((f) => `- ${f.name}: "${f.value}" (Evidence snippet: "${f.evidence || f.value}")`).join("\n")
+    : "- None"
+}
+
+VERIFIED FACTS (FROM TRUSTED WEB SOURCES):
+${
+  verifiedWebFields.length > 0
+    ? verifiedWebFields.map((f) => `- ${f.name}: "${f.value}" (Citation: ${f.citation})`).join("\n")
+    : "- None"
+}
+
+FACTS EXPLICITLY NOT MENTIONED / ABSENT IN SOURCE:
+${notMentionedFields.length > 0 ? notMentionedFields.map((f) => `- ${f}`).join(", ") : "- None"}
+
+USER QUERY:
+"${message}"
+
+STRICT ZERO-HALLUCINATION & MULTILINGUAL RULES:
+1. ONLY use the verified facts provided above. Do NOT invent missing details, phone numbers, addresses, dates, or websites.
+2. If the user asks for a detail (e.g. location, venue, phone, time, website, price) that is absent or in the NOT MENTIONED list:
+   - In the language of the user's query, state clearly that this information is not mentioned in the source.
+   - Example (English): "The location is not mentioned in the source." / "No phone number is mentioned."
+   - Example (Hindi): "स्थान का उल्लेख नहीं है।" / "फ़ोन नंबर का उल्लेख नहीं है।"
+   - Example (Tamil): "இடம் குறிப்பிடப்படவில்லை."
+   - Example (Spanish): "La ubicación no se menciona en la fuente."
+3. If the user asks for translation, explanation, or summary:
+   - Translate, explain, or summarize ONLY the verified facts.
+   - NEVER introduce template placeholders (e.g. "123 Anywhere Street", "123-456-7890", "reallygreatsite.com").
+4. If referring to web-verified facts, state that they were verified online.
+5. Keep answers direct, concise, and helpful (1-3 sentences).`;
+
+    const contents = [{ text: systemPrompt }];
+
+    const modelsToTry = ["gemini-3.6-flash", "gemini-3.7-flash"];
     let answer = "";
 
     for (const model of modelsToTry) {
