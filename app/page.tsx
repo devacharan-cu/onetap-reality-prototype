@@ -6,6 +6,7 @@ import React, {
   ErrorInfo,
   FormEvent,
   ReactNode,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -43,6 +44,9 @@ import {
   Download,
   Sun,
   Moon,
+  SwitchCamera,
+  Zap,
+  ZapOff,
   LucideIcon,
 } from "lucide-react";
 
@@ -483,6 +487,16 @@ function OneTapApp() {
   const [feedbackMessage, setFeedbackMessage] = useState<string>("");
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   
+  // Real Live Camera States
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [cameraLoading, setCameraLoading] = useState(false);
+  const [hasMultipleCameras, setHasMultipleCameras] = useState(false);
+  const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+
   // Theme Management
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     if (typeof window !== "undefined") {
@@ -519,8 +533,263 @@ function OneTapApp() {
   // Show all / verified filter for fields
   const [showAllFields, setShowAllFields] = useState(false);
 
-  const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  // Stop camera stream safely and release hardware
+  function stopCameraStream() {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {
+          // Ignore
+        }
+      });
+      mediaStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsCameraOpen(false);
+    setCameraLoading(false);
+    setTorchOn(false);
+  }
+
+  // Cleanup active camera on component unmount
+  useEffect(() => {
+    return () => {
+      stopCameraStream();
+    };
+  }, []);
+
+  // Open Real Camera (Webcam on laptop or Camera on phone)
+  async function startRealCamera(targetFacing: "environment" | "user" = facingMode) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus("error");
+      setErrorMessage("Camera access is not supported on this browser. Please choose an image from your gallery.");
+      return;
+    }
+
+    setCameraLoading(true);
+    setErrorMessage("");
+    setFeedbackMessage("");
+    stopCameraStream();
+
+    try {
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: targetFacing },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+          audio: false,
+        });
+      } catch {
+        // Fallback with basic constraints if resolution/facingMode constraint fails
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      }
+
+      mediaStreamRef.current = stream;
+      setIsCameraOpen(true);
+      setCameraLoading(false);
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => {});
+      }
+
+      // Check for multiple cameras
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter((d) => d.kind === "videoinput");
+        setHasMultipleCameras(videoDevices.length > 1);
+      } catch {
+        setHasMultipleCameras(false);
+      }
+
+      // Check for torch/flashlight capability
+      try {
+        const track = stream.getVideoTracks()[0];
+        const capabilities = track.getCapabilities ? (track.getCapabilities() as { torch?: boolean }) : {};
+        setTorchSupported(Boolean(capabilities && capabilities.torch));
+      } catch {
+        setTorchSupported(false);
+      }
+    } catch (err) {
+      console.error("Camera access error:", err);
+      stopCameraStream();
+      setStatus("error");
+      if (err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "PermissionDeniedError")) {
+        setErrorMessage("Camera permission was denied. You can still choose an image from your gallery.");
+      } else if (err instanceof DOMException && err.name === "NotFoundError") {
+        setErrorMessage("No camera was detected on this device. Please select an image from files.");
+      } else {
+        setErrorMessage("Could not connect to camera. Please select an image from your gallery.");
+      }
+    }
+  }
+
+  // Switch between front and rear cameras
+  function toggleCameraFacing() {
+    const nextFacing = facingMode === "environment" ? "user" : "environment";
+    setFacingMode(nextFacing);
+    startRealCamera(nextFacing);
+  }
+
+  // Toggle Torch/Flashlight if supported
+  async function toggleTorch() {
+    if (!mediaStreamRef.current || !torchSupported) return;
+    try {
+      const track = mediaStreamRef.current.getVideoTracks()[0];
+      const nextTorch = !torchOn;
+      await (track as unknown as { applyConstraints: (c: { advanced: Array<{ torch: boolean }> }) => Promise<void> }).applyConstraints({
+        advanced: [{ torch: nextTorch }],
+      });
+      setTorchOn(nextTorch);
+    } catch {
+      // Torch constraint failed
+    }
+  }
+
+  // Capture Current Video Frame and immediately run analysis
+  function captureVideoFrame() {
+    if (!videoRef.current || !mediaStreamRef.current) return;
+
+    try {
+      const video = videoRef.current;
+      const width = video.videoWidth || 1280;
+      const height = video.videoHeight || 720;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+
+      if (!ctx) {
+        throw new Error("Could not initialize canvas context.");
+      }
+
+      ctx.drawImage(video, 0, 0, width, height);
+      const base64Data = canvas.toDataURL("image/jpeg", 0.88);
+
+      // Stop camera hardware immediately
+      stopCameraStream();
+
+      // Launch automated analysis pipeline immediately
+      processBase64Image(base64Data);
+    } catch (err) {
+      console.error("Frame capture error:", err);
+      stopCameraStream();
+      setStatus("error");
+      setErrorMessage("Failed to capture photo frame. Please try again.");
+    }
+  }
+
+  // Core Analysis Engine
+  async function processBase64Image(base64: string) {
+    setStatus("loading");
+    setLoadingStep("1. Capturing and optimizing frame...");
+    setErrorMessage("");
+    setFeedbackMessage("");
+    setAnalysis(null);
+    setChatMessages([]);
+    setImage(base64);
+
+    try {
+      setLoadingStep("2. Understanding Scene Context...");
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 40000);
+
+      const stepTimer1 = setTimeout(() => {
+        setLoadingStep("3. Checking Evidence & Grounding...");
+      }, 2000);
+
+      const stepTimer2 = setTimeout(() => {
+        setLoadingStep("4. Preparing Verified Actions...");
+      }, 4500);
+
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: base64 }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+      clearTimeout(stepTimer1);
+      clearTimeout(stepTimer2);
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          (data && data.error) ||
+            `Analysis failed (HTTP ${response.status}). Please try again.`
+        );
+      }
+
+      if (!data || typeof data !== "object" || !data.title) {
+        throw new Error("Invalid analysis data format received from server.");
+      }
+
+      const validatedAnalysis = data as Analysis;
+      setAnalysis(validatedAnalysis);
+      setStatus("success");
+
+      // Save to local history
+      saveScanToHistory(validatedAnalysis, base64);
+    } catch (err) {
+      console.error("Processing error:", err);
+      setStatus("error");
+      if (err instanceof Error && err.name === "AbortError") {
+        setErrorMessage("Request timed out. Please check your connection and try again.");
+      } else {
+        setErrorMessage(
+          err instanceof Error
+            ? err.message
+            : "Could not understand this image. Try another photo."
+        );
+      }
+    }
+  }
+
+  // Process File from Gallery/Files
+  async function processFile(file?: File) {
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setStatus("error");
+      setErrorMessage("Please select a valid image file (JPEG, PNG, WebP).");
+      return;
+    }
+
+    try {
+      const base64 = await compressImage(file);
+      processBase64Image(base64);
+    } catch {
+      setStatus("error");
+      setErrorMessage("Could not read image file. Please try another photo.");
+    }
+  }
+
+  function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+    event.target.value = "";
+  }
+
+  function triggerGalleryUpload() {
+    if (uploadInputRef.current) {
+      uploadInputRef.current.click();
+    }
+  }
 
   function toggleTheme() {
     const nextTheme: ThemeMode = themeMode === "dark" ? "light" : "dark";
@@ -576,103 +845,6 @@ function OneTapApp() {
     setHistoryOpen(false);
     setChatMessages([]);
     setFeedbackMessage(`✓ Loaded "${item.title}"`);
-  }
-
-  async function processFile(file?: File) {
-    if (!file) return;
-
-    if (!file.type.startsWith("image/")) {
-      setStatus("error");
-      setErrorMessage("Please select a valid image file (JPEG, PNG, WebP).");
-      return;
-    }
-
-    setStatus("loading");
-    setLoadingStep("1. Optimizing image for mobile vision...");
-    setErrorMessage("");
-    setFeedbackMessage("");
-    setAnalysis(null);
-    setChatMessages([]);
-
-    try {
-      const base64 = await compressImage(file);
-      setImage(base64);
-
-      setLoadingStep("2. Gemini 3.7 Vision Scene Intelligence...");
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 40000);
-
-      const stepTimer1 = setTimeout(() => {
-        setLoadingStep("3. Grounding & Zero-Hallucination Verification...");
-      }, 2000);
-
-      const stepTimer2 = setTimeout(() => {
-        setLoadingStep("4. Synthesizing Verified Phone Actions...");
-      }, 4500);
-
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: base64 }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-      clearTimeout(stepTimer1);
-      clearTimeout(stepTimer2);
-
-      const data = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        throw new Error(
-          (data && data.error) ||
-            `Analysis failed (HTTP ${response.status}). Please try again.`
-        );
-      }
-
-      if (!data || typeof data !== "object" || !data.title) {
-        throw new Error("Invalid analysis data format received from server.");
-      }
-
-      const validatedAnalysis = data as Analysis;
-      setAnalysis(validatedAnalysis);
-      setStatus("success");
-
-      // Save to local history
-      saveScanToHistory(validatedAnalysis, base64);
-    } catch (err) {
-      console.error("Processing error:", err);
-      setStatus("error");
-      if (err instanceof Error && err.name === "AbortError") {
-        setErrorMessage("Request timed out. Please check your connection and try again.");
-      } else {
-        setErrorMessage(
-          err instanceof Error
-            ? err.message
-            : "Could not understand this image. Try another photo."
-        );
-      }
-    }
-  }
-
-  function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file) {
-      processFile(file);
-    }
-    event.target.value = "";
-  }
-
-  function triggerCamera() {
-    if (cameraInputRef.current) {
-      cameraInputRef.current.click();
-    }
-  }
-
-  function triggerUpload() {
-    if (uploadInputRef.current) {
-      uploadInputRef.current.click();
-    }
   }
 
   async function handleAction(action: Action) {
@@ -770,12 +942,13 @@ function OneTapApp() {
         }
 
         case "copy": {
-          const verifiedFields = Object.entries(analysis.fields)
-            .filter(([, f]) => f.status !== "not_mentioned" && f.value)
-            .map(([k, f]) => `• ${FIELD_LABELS[k]?.label || k}: ${f.value} (${f.status === "web_verified" ? "Web Verified" : "From Image"})`)
+          // Format ONLY verified non-empty fields (exclude "Not mentioned")
+          const verifiedLines = Object.entries(analysis.fields)
+            .filter(([, f]) => f.status !== "not_mentioned" && f.value && f.value !== "Not mentioned")
+            .map(([k, f]) => `• ${FIELD_LABELS[k]?.label || k}: ${f.value}`)
             .join("\n");
 
-          const textToCopy = `📋 OneTap Reality — ${analysis.title}\n\n${analysis.summary}\n\nVerified Details:\n${verifiedFields || "None"}`;
+          const textToCopy = `OneTap Reality\n\n${analysis.title}\n${analysis.summary}\n\n${verifiedLines}`;
 
           if (navigator.clipboard) {
             await navigator.clipboard.writeText(textToCopy);
@@ -787,12 +960,13 @@ function OneTapApp() {
         }
 
         case "share": {
-          const verifiedFields = Object.entries(analysis.fields)
-            .filter(([, f]) => f.status !== "not_mentioned" && f.value)
+          // Format ONLY verified non-empty fields (exclude "Not mentioned")
+          const verifiedLines = Object.entries(analysis.fields)
+            .filter(([, f]) => f.status !== "not_mentioned" && f.value && f.value !== "Not mentioned")
             .map(([k, f]) => `• ${FIELD_LABELS[k]?.label || k}: ${f.value}`)
             .join("\n");
 
-          const shareText = `🔍 OneTap Reality Insight:\n\n${analysis.title}\n${analysis.summary}\n\n${verifiedFields}`;
+          const shareText = `OneTap Reality\n\n${analysis.title}\n${analysis.summary}\n\n${verifiedLines}`;
 
           if (navigator.share) {
             try {
@@ -916,6 +1090,7 @@ function OneTapApp() {
   }
 
   function reset() {
+    stopCameraStream();
     setStatus("idle");
     setImage(null);
     setAnalysis(null);
@@ -993,16 +1168,7 @@ function OneTapApp() {
 
   return (
     <main className="min-h-screen bg-[var(--bg-app)] text-[var(--text-primary)] flex flex-col items-center justify-between transition-colors duration-200">
-      {/* Hidden file inputs for Camera and Gallery */}
-      <input
-        ref={cameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        aria-label="Camera capture input"
-        onChange={handleImageChange}
-      />
+      {/* Hidden file input for Gallery file selection */}
       <input
         ref={uploadInputRef}
         type="file"
@@ -1098,21 +1264,110 @@ function OneTapApp() {
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={reset}
-              className="mt-4 w-full flex items-center justify-center gap-2 rounded-xl bg-[var(--bg-pill)] hover:bg-[var(--bg-card-hover)] py-2.5 text-xs font-semibold text-[var(--text-primary)] transition"
-            >
-              <RefreshCw size={13} />
-              <span>Scan something else</span>
-            </button>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={reset}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-[var(--bg-pill)] hover:bg-[var(--bg-card-hover)] py-2.5 text-xs font-semibold text-[var(--text-primary)] transition"
+              >
+                <RefreshCw size={13} />
+                <span>Try Again</span>
+              </button>
+              <button
+                type="button"
+                onClick={triggerGalleryUpload}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-[var(--btn-primary-bg)] text-[var(--btn-primary-text)] py-2.5 text-xs font-semibold hover:opacity-90 transition"
+              >
+                <Upload size={13} />
+                <span>Upload File</span>
+              </button>
+            </div>
           </div>
         )}
 
         {/* Main Content Area */}
         <section className="flex flex-1 flex-col justify-center py-6">
-          {/* IDLE VIEW */}
-          {status === "idle" && (
+          {/* LIVE CAMERA VIEWFINDER MODAL / VIEW */}
+          {isCameraOpen && (
+            <div className="relative aspect-[4/5] w-full overflow-hidden rounded-[2rem] border border-[var(--accent-emerald)] bg-black shadow-2xl flex flex-col justify-between p-4">
+              {/* Live Video Element */}
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+
+              {/* Viewfinder Target Framing Overlay */}
+              <div className="pointer-events-none absolute inset-6 rounded-2xl border border-white/25 flex flex-col justify-between p-3">
+                <div className="flex justify-between">
+                  <div className="w-4 h-4 border-t-2 border-l-2 border-[var(--accent-emerald)]" />
+                  <div className="w-4 h-4 border-t-2 border-r-2 border-[var(--accent-emerald)]" />
+                </div>
+                <div className="flex justify-between">
+                  <div className="w-4 h-4 border-b-2 border-l-2 border-[var(--accent-emerald)]" />
+                  <div className="w-4 h-4 border-b-2 border-r-2 border-[var(--accent-emerald)]" />
+                </div>
+              </div>
+
+              {/* Camera Header Controls */}
+              <div className="relative z-10 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={stopCameraStream}
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-md hover:bg-black/80 transition active:scale-95"
+                  aria-label="Close camera"
+                >
+                  <X size={18} />
+                </button>
+
+                <div className="flex items-center gap-2">
+                  {torchSupported && (
+                    <button
+                      type="button"
+                      onClick={toggleTorch}
+                      className={`flex h-9 w-9 items-center justify-center rounded-full backdrop-blur-md transition active:scale-95 ${
+                        torchOn ? "bg-amber-400 text-black" : "bg-black/60 text-white hover:bg-black/80"
+                      }`}
+                      aria-label="Toggle flashlight"
+                    >
+                      {torchOn ? <Zap size={16} /> : <ZapOff size={16} />}
+                    </button>
+                  )}
+
+                  {hasMultipleCameras && (
+                    <button
+                      type="button"
+                      onClick={toggleCameraFacing}
+                      className="flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-md hover:bg-black/80 transition active:scale-95"
+                      aria-label="Switch camera"
+                    >
+                      <SwitchCamera size={16} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Camera Footer Shutter Button */}
+              <div className="relative z-10 flex flex-col items-center pb-2">
+                <button
+                  type="button"
+                  onClick={captureVideoFrame}
+                  className="group relative flex h-20 w-20 items-center justify-center rounded-full border-4 border-white/80 bg-white/20 backdrop-blur-md transition hover:scale-105 active:scale-95"
+                  aria-label="Capture photo"
+                >
+                  <div className="h-14 w-14 rounded-full bg-white transition group-active:scale-90" />
+                </button>
+                <p className="mt-2 text-[11px] font-medium text-white/80 drop-shadow-md">
+                  Tap to capture &amp; understand
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* IDLE VIEW (When Camera is not active) */}
+          {!isCameraOpen && status === "idle" && (
             <div className="flex flex-col items-center text-center">
               <div className="my-8">
                 <p className="text-4xl font-extrabold leading-[1.05] tracking-[-0.04em] text-[var(--text-primary)]">
@@ -1124,20 +1379,25 @@ function OneTapApp() {
                 </p>
 
                 <p className="mt-4 text-xs leading-6 text-[var(--text-secondary)] max-w-xs mx-auto">
-                  Point your phone at the physical world. AI extracts verified facts,
+                  Point your camera at the physical world. AI extracts verified facts,
                   verifies missing data, and generates instant phone actions.
                 </p>
               </div>
 
-              {/* Primary Mobile Capture Button */}
+              {/* Primary Real Camera Shutter Trigger */}
               <div className="w-full space-y-3">
                 <button
                   type="button"
-                  onClick={triggerCamera}
+                  onClick={() => startRealCamera("environment")}
+                  disabled={cameraLoading}
                   className="group relative w-full flex flex-col items-center justify-center rounded-[2rem] border border-[var(--border-medium)] bg-[var(--bg-card)] p-8 shadow-xl transition hover:border-[var(--accent-emerald)] hover:bg-[var(--bg-card-hover)] active:scale-[0.98]"
                 >
                   <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-[var(--btn-primary-bg)] text-[var(--btn-primary-text)] shadow-xl transition group-hover:scale-105 group-active:scale-95">
-                    <Camera size={34} strokeWidth={2} />
+                    {cameraLoading ? (
+                      <div className="w-8 h-8 rounded-full border-3 border-[var(--btn-primary-text)]/30 border-t-[var(--btn-primary-text)] animate-spin" />
+                    ) : (
+                      <Camera size={34} strokeWidth={2} />
+                    )}
                   </div>
 
                   <span className="text-base font-semibold tracking-tight text-[var(--text-primary)]">
@@ -1145,14 +1405,14 @@ function OneTapApp() {
                   </span>
 
                   <span className="mt-1 text-[11px] text-[var(--text-muted)]">
-                    Opens device camera
+                    Opens real camera preview
                   </span>
                 </button>
 
                 {/* Secondary Gallery Upload */}
                 <button
                   type="button"
-                  onClick={triggerUpload}
+                  onClick={triggerGalleryUpload}
                   className="w-full flex items-center justify-center gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] py-3.5 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-card-hover)] hover:text-[var(--text-primary)] transition active:scale-[0.99]"
                 >
                   <Upload size={14} />
@@ -1169,7 +1429,7 @@ function OneTapApp() {
           )}
 
           {/* LOADING & SUCCESS PREVIEWS */}
-          {(status === "loading" || status === "success") && (
+          {!isCameraOpen && (status === "loading" || status === "success") && (
             <div className="space-y-5">
               {/* Image Preview Container */}
               <div className="relative aspect-[4/5] w-full overflow-hidden rounded-[2rem] border border-[var(--border-subtle)] bg-[var(--bg-card-subtle)] shadow-2xl">
@@ -1349,19 +1609,19 @@ function OneTapApp() {
                                   {getActionIcon(action.type)}
                                 </div>
 
-                                <div>
+                                <div className="flex-1 pr-2">
                                   <p className="text-sm font-semibold text-[var(--text-primary)]">
                                     {actionLoadingId === action.id
                                       ? "Executing..."
                                       : action.label}
                                   </p>
-                                  <p className="mt-0.5 text-[11px] text-[var(--text-secondary)] leading-snug">
+                                  <p className="mt-0.5 text-[11px] text-[var(--text-secondary)] leading-snug break-words">
                                     {action.description}
                                   </p>
                                 </div>
                               </div>
 
-                              <ChevronRight className="w-4 h-4 text-[var(--text-muted)] transition group-hover:text-[var(--text-primary)] group-hover:translate-x-0.5" />
+                              <ChevronRight className="w-4 h-4 text-[var(--text-muted)] shrink-0 transition group-hover:text-[var(--text-primary)] group-hover:translate-x-0.5" />
                             </button>
 
                             {/* Secondary Download .ics button when action is Calendar */}

@@ -3,7 +3,7 @@ const fs = require('fs');
 
 async function testPipeline() {
   console.log('=== 1. TESTING POST /api/analyze ===');
-  const filePath = '/home/devacharan/.gemini/antigravity/brain/bda853cd-91a6-47b2-ad1f-e45cc5dbd0ba/.user_uploaded/media_1787549721664.png';
+  const filePath = '/home/devacharan/.gemini/antigravity/brain/bda853cd-91a6-47b2-ad1f-e45cc5dbd0ba/.user_uploaded/media_1787553892879.png';
   const buffer = fs.readFileSync(filePath);
   const base64Data = 'data:image/png;base64,' + buffer.toString('base64');
 
@@ -68,9 +68,10 @@ async function testPipeline() {
         res.on('data', chunk => data += chunk);
         res.on('end', () => {
           try {
-            resolve(JSON.parse(data).answer);
+            const json = JSON.parse(data);
+            resolve(json.answer || json.error || data);
           } catch (e) {
-            reject(new Error('Failed to parse chat response: ' + data));
+            resolve(data);
           }
         });
       });

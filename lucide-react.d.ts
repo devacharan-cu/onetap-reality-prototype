@@ -51,4 +51,9 @@ declare module 'lucide-react' {
   export const Moon: LucideIcon;
   export const Monitor: LucideIcon;
   export const Download: LucideIcon;
+  export const SwitchCamera: LucideIcon;
+  export const Zap: LucideIcon;
+  export const ZapOff: LucideIcon;
+  export const RotateCw: LucideIcon;
+  export const Video: LucideIcon;
 }

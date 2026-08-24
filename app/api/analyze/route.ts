@@ -331,8 +331,13 @@ Return ONLY valid JSON matching this exact structure:
   }
 }`;
 
-    // Execute Visual Analysis (gemini-3.7-flash with LOW thinking, auto fallback to gemini-3.6-flash)
-    const visionModels = ["gemini-3.7-flash", "gemini-3.6-flash"];
+    // Execute Visual Analysis with robust multi-model fallback chain
+    const visionModels = [
+      "gemini-3.5-flash",
+      "gemini-flash-latest",
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-flash-lite",
+    ];
     let rawText = "";
 
     for (const model of visionModels) {
@@ -550,7 +555,7 @@ Return JSON:
 }`;
 
           const webResp = await ai.models.generateContent({
-            model: "gemini-3.6-flash",
+            model: "gemini-flash-latest",
             contents: [{ text: searchPrompt }],
             config: {
               responseMimeType: "application/json",
