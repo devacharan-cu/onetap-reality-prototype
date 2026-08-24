@@ -232,6 +232,55 @@ async function runEvaluation() {
     'Q7 provided safe grounded action advice'
   );
 
+  // Question H: Multi-turn short follow-up "When?" with prior history
+  const chatQ8 = await postJson('http://localhost:3001/api/chat', {
+    message: 'When?',
+    history: [
+      { sender: 'user', text: 'What is this event?' },
+      { sender: 'assistant', text: 'This is the Borcelle College Art Fair.' },
+    ],
+    context,
+    title,
+    summary,
+    keyTakeaway,
+    temporalState,
+    fields,
+  });
+  console.log('  Q8 (Multi-Turn Follow-up): "When?"');
+  console.log('  A8:', chatQ8.data.answer);
+  assert(
+    chatQ8.data.answer.toLowerCase().includes('october') ||
+    chatQ8.data.answer.includes('10') ||
+    chatQ8.data.answer.includes('18'),
+    'Q8 multi-turn history resolved "When?" to verified dates'
+  );
+
+  // Question I: Multi-turn short follow-up "Where?" with prior history
+  const chatQ9 = await postJson('http://localhost:3001/api/chat', {
+    message: 'Where?',
+    history: [
+      { sender: 'user', text: 'What is this event?' },
+      { sender: 'assistant', text: 'This is the Borcelle College Art Fair.' },
+      { sender: 'user', text: 'When is it?' },
+      { sender: 'assistant', text: 'It takes place from 10th to 18th October.' },
+    ],
+    context,
+    title,
+    summary,
+    keyTakeaway,
+    temporalState,
+    fields,
+  });
+  console.log('  Q9 (Multi-Turn Follow-up): "Where?"');
+  console.log('  A9:', chatQ9.data.answer);
+  assert(
+    chatQ9.data.answer.toLowerCase().includes('not mentioned') ||
+    chatQ9.data.answer.toLowerCase().includes('not available') ||
+    chatQ9.data.answer.toLowerCase().includes('not specified') ||
+    chatQ9.data.answer.toLowerCase().includes('does not mention'),
+    'Q9 multi-turn history resolved "Where?" and correctly refused absent location'
+  );
+
   console.log('\n====================================================');
   console.log(`EVALUATION SUMMARY: ${passedTests}/${totalTests} TESTS PASSED (100%)`);
   console.log('====================================================');

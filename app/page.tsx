@@ -47,6 +47,8 @@ import {
   SwitchCamera,
   Zap,
   ZapOff,
+  FileText,
+  Layers,
   LucideIcon,
 } from "lucide-react";
 
@@ -477,6 +479,49 @@ const FIELD_LABELS: Record<string, { label: string; icon: LucideIcon }> = {
   language: { label: "Detected Language", icon: Languages },
 };
 
+const DEMO_EXAMPLES = [
+  {
+    id: "ex-event",
+    title: "Event Poster",
+    subtitle: "Art Fair · Free Entry",
+    icon: Calendar,
+    type: "image",
+    path: "/samples/event_poster.png",
+  },
+  {
+    id: "ex-biz",
+    title: "Business Card",
+    subtitle: "AI Architect · Contact",
+    icon: Building2,
+    type: "svg",
+    path: "/samples/business_card.svg",
+  },
+  {
+    id: "ex-receipt",
+    title: "Coffee Receipt",
+    subtitle: "Line Items · Total $25.53",
+    icon: FileText,
+    type: "svg",
+    path: "/samples/receipt.svg",
+  },
+  {
+    id: "ex-menu",
+    title: "Bistro Menu",
+    subtitle: "Dishes & Prices",
+    icon: Layers,
+    type: "svg",
+    path: "/samples/menu.svg",
+  },
+  {
+    id: "ex-product",
+    title: "Tech Packaging",
+    subtitle: "Specs & Warranty",
+    icon: Tag,
+    type: "svg",
+    path: "/samples/product.svg",
+  },
+];
+
 function subscribeStorage(callback: () => void) {
   if (typeof window === "undefined") return () => {};
   window.addEventListener("storage", callback);
@@ -494,6 +539,59 @@ function getHistorySnapshot(): string {
 
 function getServerHistorySnapshot(): string {
   return "[]";
+}
+
+function saveScanToHistory(newAnalysis: Analysis, thumbDataUrl?: string) {
+  try {
+    if (typeof window === "undefined") return;
+    const current: HistoryItem[] = JSON.parse(localStorage.getItem("onetap_scan_history") || "[]");
+    // Avoid duplicate consecutive scans of the same subject
+    if (
+      current.length > 0 &&
+      current[0].title === newAnalysis.title &&
+      current[0].summary === newAnalysis.summary
+    ) {
+      return;
+    }
+
+    const newItem: HistoryItem = {
+      id: `scan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      timestamp: Date.now(),
+      context: newAnalysis.context,
+      title: newAnalysis.title,
+      summary: newAnalysis.summary,
+      thumbnail: thumbDataUrl,
+      analysis: newAnalysis,
+    };
+
+    const updated = [newItem, ...current.slice(0, 19)];
+    localStorage.setItem("onetap_scan_history", JSON.stringify(updated));
+    window.dispatchEvent(new Event("storage"));
+  } catch {
+    // Ignore storage quota or parse errors
+  }
+}
+
+function deleteHistoryItemFromStorage(id: string) {
+  try {
+    if (typeof window === "undefined") return;
+    const current: HistoryItem[] = JSON.parse(localStorage.getItem("onetap_scan_history") || "[]");
+    const updated = current.filter((item) => item.id !== id);
+    localStorage.setItem("onetap_scan_history", JSON.stringify(updated));
+    window.dispatchEvent(new Event("storage"));
+  } catch {
+    // Ignore
+  }
+}
+
+function clearAllHistoryFromStorage() {
+  try {
+    if (typeof window === "undefined") return;
+    localStorage.removeItem("onetap_scan_history");
+    window.dispatchEvent(new Event("storage"));
+  } catch {
+    // Ignore
+  }
 }
 
 function OneTapApp() {
@@ -932,6 +1030,58 @@ function OneTapApp() {
     }
   }
 
+  async function loadDemoExample(example: (typeof DEMO_EXAMPLES)[0]) {
+    try {
+      reset();
+      setStatus("loading");
+      setLoadingStep(`Loading ${example.title}...`);
+      setErrorMessage("");
+      setFeedbackMessage("");
+
+      const resp = await fetch(example.path);
+      if (!resp.ok) throw new Error("Could not load sample asset.");
+
+      if (example.type === "svg") {
+        const svgText = await resp.text();
+        const svgBlob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
+        const url = URL.createObjectURL(svgBlob);
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = 800;
+          canvas.height = example.id === "ex-biz" ? 500 : example.id === "ex-receipt" ? 850 : 700;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const pngDataUri = canvas.toDataURL("image/png");
+            URL.revokeObjectURL(url);
+            processBase64Image(pngDataUri);
+          }
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          setStatus("error");
+          setErrorMessage("Failed to render example SVG.");
+        };
+        img.src = url;
+      } else {
+        const blob = await resp.blob();
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === "string") {
+            processBase64Image(reader.result);
+          }
+        };
+        reader.readAsDataURL(blob);
+      }
+    } catch (err) {
+      setStatus("error");
+      setErrorMessage(err instanceof Error ? err.message : "Could not load example.");
+    }
+  }
+
   function toggleTheme() {
     const nextTheme: ThemeMode = themeMode === "dark" ? "light" : "dark";
     setThemeMode(nextTheme);
@@ -947,62 +1097,16 @@ function OneTapApp() {
     }
   }
 
-  function saveScanToHistory(newAnalysis: Analysis, thumbDataUrl?: string) {
-    try {
-      const current: HistoryItem[] = JSON.parse(localStorage.getItem("onetap_scan_history") || "[]");
-      // Avoid duplicate consecutive scans of the same subject
-      if (
-        current.length > 0 &&
-        current[0].title === newAnalysis.title &&
-        current[0].summary === newAnalysis.summary
-      ) {
-        return;
-      }
-
-      const newItem: HistoryItem = {
-        id: `scan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        timestamp: Date.now(),
-        context: newAnalysis.context,
-        title: newAnalysis.title,
-        summary: newAnalysis.summary,
-        thumbnail: thumbDataUrl,
-        analysis: newAnalysis,
-      };
-
-      const updated = [newItem, ...current.slice(0, 19)];
-      localStorage.setItem("onetap_scan_history", JSON.stringify(updated));
-      window.dispatchEvent(new Event("storage"));
-    } catch {
-      // Ignore
-    }
-  }
-
   function deleteHistoryItem(id: string, e?: React.MouseEvent) {
     if (e) e.stopPropagation();
-    try {
-      if (typeof window !== "undefined") {
-        const current: HistoryItem[] = JSON.parse(localStorage.getItem("onetap_scan_history") || "[]");
-        const updated = current.filter((item) => item.id !== id);
-        localStorage.setItem("onetap_scan_history", JSON.stringify(updated));
-        window.dispatchEvent(new Event("storage"));
-      }
-      setFeedbackMessage("✓ Scan deleted from history.");
-    } catch {
-      // Ignore
-    }
+    deleteHistoryItemFromStorage(id);
+    setFeedbackMessage("✓ Scan deleted from history.");
   }
 
   function executeClearAllHistory() {
-    try {
-      if (typeof window !== "undefined") {
-        localStorage.removeItem("onetap_scan_history");
-        window.dispatchEvent(new Event("storage"));
-      }
-      setConfirmClearOpen(false);
-      setFeedbackMessage("✓ All scan history cleared.");
-    } catch {
-      // Ignore
-    }
+    clearAllHistoryFromStorage();
+    setConfirmClearOpen(false);
+    setFeedbackMessage("✓ All scan history cleared.");
   }
 
   function loadHistoryItem(item: HistoryItem) {
@@ -1192,12 +1296,13 @@ function OneTapApp() {
     setChatLoading(true);
 
     try {
-      // Send verified structured evidence (NO raw image) to prevent any hallucinations
+      // Send verified structured evidence + multi-turn history (NO raw image) to prevent hallucinations
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: query,
+          history: chatMessages.map((m) => ({ sender: m.sender, text: m.text })),
           context: analysis.context,
           title: analysis.title,
           summary: analysis.summary,
@@ -1633,6 +1738,41 @@ function OneTapApp() {
                   <Upload size={14} />
                   <span>Choose from Gallery / Files</span>
                 </button>
+
+                {/* Try an Example 1-Tap Demo Grid */}
+                <div className="pt-3">
+                  <div className="flex items-center justify-between mb-2 px-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                      Try an Example
+                    </span>
+                    <span className="text-[10px] text-[var(--text-muted)]">1-Tap AI Demo</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-left">
+                    {DEMO_EXAMPLES.map((ex) => {
+                      const IconComp = ex.icon;
+                      return (
+                        <button
+                          key={ex.id}
+                          type="button"
+                          onClick={() => loadDemoExample(ex)}
+                          className="flex items-center gap-2.5 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-3 text-left hover:border-[var(--accent-emerald)] hover:bg-[var(--bg-card-hover)] transition group active:scale-[0.98]"
+                        >
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-pill)] text-[var(--text-primary)] group-hover:text-[var(--accent-emerald)] transition">
+                            <IconComp size={15} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold text-[var(--text-primary)] truncate">
+                              {ex.title}
+                            </p>
+                            <p className="text-[10px] text-[var(--text-muted)] truncate">
+                              {ex.subtitle}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
 
               {/* Trust Badge */}
@@ -1757,16 +1897,26 @@ function OneTapApp() {
 
                   {/* FIELD-LEVEL EVIDENCE & VERIFICATION CARD */}
                   <div className="rounded-[1.75rem] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5 shadow-sm">
-                    <div className="mb-3.5 flex items-center justify-between">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-muted)]">
-                        Field Evidence &amp; Verification
-                      </p>
+                    <div className="mb-3.5 flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-muted)]">
+                          Evidence Breakdown
+                        </p>
+                        <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[9px] font-semibold text-emerald-600 dark:text-emerald-400">
+                          {verifiedFieldsList.length} Verified
+                        </span>
+                        {unmentionedFieldsList.length > 0 && (
+                          <span className="rounded-full bg-zinc-500/10 border border-zinc-500/20 px-2 py-0.5 text-[9px] font-medium text-[var(--text-muted)]">
+                            {unmentionedFieldsList.length} Absent
+                          </span>
+                        )}
+                      </div>
                       <button
                         type="button"
                         onClick={() => setShowAllFields(!showAllFields)}
                         className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition"
                       >
-                        {showAllFields ? "Show Verified Only" : "Show All Fields"}
+                        {showAllFields ? "Show Verified Only" : "Show All"}
                       </button>
                     </div>
 

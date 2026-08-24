@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="700" viewBox="0 0 700 700">
+  <defs>
+    <linearGradient id="pbg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#020617"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <rect width="700" height="700" rx="30" fill="url(#pbg)" stroke="#1e293b" stroke-width="2"/>
+  
+  <text x="60" y="100" font-family="system-ui, -apple-system, sans-serif" font-size="32" font-weight="900" fill="#38bdf8" letter-spacing="3">SONY</text>
+  <text x="60" y="170" font-family="system-ui, -apple-system, sans-serif" font-size="42" font-weight="800" fill="#f8fafc">WH-1000XM5</text>
+  <text x="60" y="210" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="500" fill="#94a3b8">Wireless Noise Canceling Headphones</text>
+  
+  <g transform="translate(60, 280)" font-family="system-ui, -apple-system, sans-serif" font-size="18" fill="#e2e8f0">
+    <rect x="0" y="0" width="260" height="80" rx="16" fill="#1e293b" stroke="#334155"/>
+    <text x="20" y="35" font-size="13" fill="#38bdf8" font-weight="700">BATTERY LIFE</text>
+    <text x="20" y="62" font-size="20" font-weight="bold">Up to 30 Hours</text>
+    
+    <rect x="290" y="0" width="260" height="80" rx="16" fill="#1e293b" stroke="#334155"/>
+    <text x="310" y="35" font-size="13" fill="#38bdf8" font-weight="700">AUDIO CODEC</text>
+    <text x="310" y="62" font-size="20" font-weight="bold">LDAC &amp; Hi-Res</text>
+    
+    <rect x="0" y="100" width="260" height="80" rx="16" fill="#1e293b" stroke="#334155"/>
+    <text x="20" y="135" font-size="13" fill="#38bdf8" font-weight="700">NOISE CANCELING</text>
+    <text x="20" y="162" font-size="20" font-weight="bold">Dual Processor V1</text>
+    
+    <rect x="290" y="100" width="260" height="80" rx="16" fill="#1e293b" stroke="#334155"/>
+    <text x="310" y="135" font-size="13" fill="#38bdf8" font-weight="700">CONNECTIVITY</text>
+    <text x="310" y="162" font-size="20" font-weight="bold">Bluetooth 5.2</text>
+  </g>
+  
+  <g transform="translate(60, 540)" font-family="system-ui, -apple-system, sans-serif">
+    <text x="0" y="30" font-size="16" fill="#94a3b8">Model: WH1000XM5/B</text>
+    <text x="0" y="60" font-size="16" fill="#94a3b8">Warranty: 1 Year Limited Hardware Warranty</text>
+    <text x="0" y="95" font-size="28" font-weight="bold" fill="#38bdf8">MSRP: ₹29,990 (incl. taxes)</text>
+  </g>
+</svg>

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16"/>
+      <stop offset="100%" stop-color="#141c2e"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="500" rx="24" fill="url(#bg)" stroke="#334155" stroke-width="2"/>
+  <circle cx="700" cy="100" r="140" fill="#38bdf8" opacity="0.06"/>
+  <circle cx="100" cy="420" r="100" fill="#818cf8" opacity="0.06"/>
+  
+  <text x="60" y="90" font-family="system-ui, -apple-system, sans-serif" font-size="28" font-weight="800" fill="url(#accent)" letter-spacing="2">APEX QUANTUM LABS</text>
+  <line x1="60" y1="110" x2="280" y2="110" stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>
+  
+  <text x="60" y="210" font-family="system-ui, -apple-system, sans-serif" font-size="36" font-weight="700" fill="#f8fafc">Dr. Elena Rostova</text>
+  <text x="60" y="250" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="500" fill="#94a3b8">Principal AI Research Architect</text>
+  
+  <g transform="translate(60, 310)" font-family="system-ui, -apple-system, sans-serif" font-size="18" fill="#cbd5e1">
+    <text x="0" y="25" fill="#38bdf8">Phone:</text>
+    <text x="80" y="25" font-weight="600">+1 (415) 890-2411</text>
+    
+    <text x="0" y="65" fill="#38bdf8">Email:</text>
+    <text x="80" y="65" font-weight="600">elena.rostova@apexquantum.ai</text>
+    
+    <text x="0" y="105" fill="#38bdf8">Web:</text>
+    <text x="80" y="105" font-weight="600">https://apexquantum.ai</text>
+    
+    <text x="0" y="145" fill="#38bdf8">Office:</text>
+    <text x="80" y="145" font-weight="600">450 Mission St, San Francisco, CA</text>
+  </g>
+</svg>

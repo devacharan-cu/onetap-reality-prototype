@@ -27,8 +27,14 @@ const lineItemSchema = z.object({
   unit: z.string().optional(),
 });
 
+const chatHistoryItemSchema = z.object({
+  sender: z.enum(["user", "assistant"]),
+  text: z.string(),
+});
+
 const chatRequestSchema = z.object({
   message: z.string().min(1, "Question cannot be empty"),
+  history: z.array(chatHistoryItemSchema).default([]),
   context: z.string().default("general"),
   title: z.string().default("Visual Subject"),
   summary: z.string().default(""),
@@ -61,6 +67,7 @@ export async function POST(req: NextRequest) {
 
     const {
       message,
+      history,
       context,
       title,
       summary,
@@ -143,7 +150,14 @@ ${
 FACTS EXPLICITLY NOT MENTIONED / ABSENT IN SOURCE:
 ${notMentionedFields.length > 0 ? notMentionedFields.map((f) => `- ${f}`).join(", ") : "- None"}
 
-USER QUERY:
+${
+  history && history.length > 0
+    ? `PRIOR CONVERSATION HISTORY:
+${history.map((h) => `${h.sender === "user" ? "User" : "Assistant"}: "${h.text}"`).join("\n")}
+`
+    : ""
+}
+CURRENT USER QUERY:
 "${message}"
 
 STRICT ZERO-HALLUCINATION & MULTILINGUAL REASONING RULES:
@@ -158,6 +172,7 @@ STRICT ZERO-HALLUCINATION & MULTILINGUAL REASONING RULES:
 3. CONTEXT & RECOMMENDATIONS:
    - If the user asks "What is this?", explain the verified scene context, subject title, and key takeaway.
    - If the user asks "What should I do next?", suggest safe, helpful actions based strictly on the verified facts (e.g., adding to calendar, searching the verified entity, or taking notes).
+   - If the user asks a short follow-up (e.g. "When?", "Where?", "Who?"), use the conversation history to understand what they are referring to and answer using the verified facts.
 4. TRANSLATION & EXPLANATION:
    - Translate, explain, or summarize ONLY the verified facts.
    - NEVER introduce template placeholders (e.g. "123 Anywhere Street", "123-456-7890", "reallygreatsite.com").
