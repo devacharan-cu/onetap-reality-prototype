@@ -65,3 +65,11 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   outline: 2px solid var(--accent-emerald);
   outline-offset: 2px;
 }
+
+/* True Mirror Viewfinder for Live Camera Preview */
+.camera-mirror-video {
+  transform: scaleX(-1) !important;
+  -webkit-transform: scaleX(-1) !important;
+  transform-origin: center center !important;
+}
+

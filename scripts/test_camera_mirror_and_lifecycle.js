@@ -25,9 +25,13 @@ async function testCameraAndLifecycle() {
   const pageSource = fs.readFileSync('/home/devacharan/hackathons/onetap-reality/app/page.tsx', 'utf8');
 
   // Verify Video Element is horizontally mirrored
+  const globalsCss = fs.readFileSync('/home/devacharan/hackathons/onetap-reality/app/globals.css', 'utf8');
   assert(
-    pageSource.includes('style={{ transform: "scaleX(-1)" }}') && pageSource.includes('-scale-x-100'),
-    'Video element contains explicit horizontal mirror transform: scaleX(-1) and -scale-x-100'
+    pageSource.includes('className="camera-mirror-video') &&
+    pageSource.includes('transform: "scaleX(-1)"') &&
+    globalsCss.includes('.camera-mirror-video') &&
+    globalsCss.includes('transform: scaleX(-1) !important'),
+    'Video element contains explicit horizontal mirror transform: scaleX(-1) and .camera-mirror-video !important CSS'
   );
 
   // Verify Capture Canvas draws in normal (unmirrored) orientation

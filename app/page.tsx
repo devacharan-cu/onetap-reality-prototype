@@ -583,6 +583,9 @@ function OneTapApp() {
       video.muted = true;
       video.autoplay = true;
       video.playsInline = true;
+      video.style.transform = "scaleX(-1)";
+      video.style.webkitTransform = "scaleX(-1)";
+      video.style.transformOrigin = "center center";
 
       // Handle metadata loaded
       video.onloadedmetadata = async () => {
@@ -1503,8 +1506,12 @@ function OneTapApp() {
                   const v = e.currentTarget;
                   v.play().catch((err) => console.warn("Video onCanPlay play error:", err));
                 }}
-                className="absolute inset-0 h-full w-full object-cover z-0 pointer-events-none -scale-x-100"
-                style={{ transform: "scaleX(-1)" }}
+                className="camera-mirror-video absolute inset-0 h-full w-full object-cover z-0 pointer-events-none"
+                style={{
+                  transform: "scaleX(-1)",
+                  WebkitTransform: "scaleX(-1)",
+                  transformOrigin: "center center",
+                }}
               />
 
               {/* Viewfinder Target Framing Overlay */}
