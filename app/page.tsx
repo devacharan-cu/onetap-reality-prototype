@@ -50,8 +50,8 @@ import {
   LucideIcon,
 } from "lucide-react";
 
-export type FieldStatus = "verified" | "web_verified" | "not_mentioned" | "unverified";
-export type FieldSource = "image" | "web" | "none";
+export type FieldStatus = "verified" | "web_verified" | "uncertain" | "not_mentioned" | "unverified";
+export type FieldSource = "image" | "web" | "none" | "inference";
 
 export type ExtractedField = {
   value: string;
@@ -60,6 +60,20 @@ export type ExtractedField = {
   confidence: number;
   evidence?: string;
   sourceCitation?: string;
+  reasoning?: string;
+};
+
+export type StructuredEntity = {
+  name: string;
+  type: "organization" | "event" | "person" | "product" | "location" | "business" | "document" | "other";
+  role?: string;
+};
+
+export type LineItem = {
+  label: string;
+  value: string;
+  amount?: number;
+  unit?: string;
 };
 
 export type ActionType =
@@ -87,7 +101,11 @@ export type Analysis = {
   context: string;
   title: string;
   summary: string;
+  keyTakeaway?: string;
+  temporalState?: "upcoming" | "ongoing" | "past" | "unknown";
   confidence: number;
+  entitiesList?: StructuredEntity[];
+  lineItems?: LineItem[];
   languageDetected?: {
     code: string;
     name: string;
@@ -1146,6 +1164,10 @@ function OneTapApp() {
           context: analysis.context,
           title: analysis.title,
           summary: analysis.summary,
+          keyTakeaway: analysis.keyTakeaway,
+          temporalState: analysis.temporalState,
+          entitiesList: analysis.entitiesList,
+          lineItems: analysis.lineItems,
           fields: analysis.fields,
         }),
       });
@@ -1261,6 +1283,13 @@ function OneTapApp() {
         <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/25 bg-sky-500/10 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-sky-600 dark:text-sky-400">
           <CheckCircle2 size={10} className="text-sky-500 dark:text-sky-400" />
           WEB VERIFIED
+        </span>
+      );
+    }
+    if (field.status === "uncertain") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[9px] font-semibold tracking-wide text-amber-600 dark:text-amber-400">
+          UNCERTAIN
         </span>
       );
     }
@@ -1593,10 +1622,23 @@ function OneTapApp() {
                   {/* Summary Card */}
                   <div className="rounded-[1.75rem] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5 backdrop-blur-md shadow-sm">
                     <div className="mb-2.5 flex items-center justify-between flex-wrap gap-2">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--bg-pill)] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
                           {analysis.context.replace(/_/g, " ")}
                         </span>
+                        {analysis.temporalState && analysis.temporalState !== "unknown" && (
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider border ${
+                              analysis.temporalState === "upcoming"
+                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                : analysis.temporalState === "ongoing"
+                                ? "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                : "border-zinc-500/30 bg-zinc-500/10 text-zinc-500"
+                            }`}
+                          >
+                            {analysis.temporalState}
+                          </span>
+                        )}
                         {analysis.webGroundingUsed && (
                           <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[9px] font-semibold text-sky-600 dark:text-sky-400 flex items-center gap-1">
                             <CheckCircle2 size={10} /> Web Grounded
@@ -1617,6 +1659,16 @@ function OneTapApp() {
                     <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">
                       {analysis.summary}
                     </p>
+
+                    {/* Human-Like Key Takeaway Banner */}
+                    {analysis.keyTakeaway && analysis.keyTakeaway !== analysis.summary && (
+                      <div className="mt-3.5 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3 text-xs text-[var(--text-primary)]">
+                        <p className="text-[10px] uppercase font-semibold text-emerald-600 dark:text-emerald-400 mb-0.5 flex items-center gap-1.5">
+                          <Sparkles size={11} /> Key Takeaway
+                        </p>
+                        <p className="font-medium leading-relaxed">{analysis.keyTakeaway}</p>
+                      </div>
+                    )}
 
                     {/* Multilingual Translation Alert if detected */}
                     {analysis.languageDetected && analysis.languageDetected.code !== "en" && (
@@ -1708,6 +1760,26 @@ function OneTapApp() {
                       )}
                     </div>
                   </div>
+
+                  {/* ITEMIZED BREAKDOWN CARD (RECEIPTS, MENUS, INVOICES, PRODUCTS) */}
+                  {analysis.lineItems && analysis.lineItems.length > 0 && (
+                    <div className="rounded-[1.75rem] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5 shadow-sm">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-muted)] mb-3">
+                        Itemized Breakdown ({analysis.lineItems.length})
+                      </p>
+                      <div className="space-y-1.5 text-xs">
+                        {analysis.lineItems.map((item, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between p-2.5 rounded-xl bg-[var(--bg-card-subtle)] border border-[var(--border-subtle)]"
+                          >
+                            <span className="font-medium text-[var(--text-primary)]">{item.label}</span>
+                            <span className="font-semibold text-[var(--accent-emerald)]">{item.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* SMART ACTIONS SECTION */}
                   <div>
