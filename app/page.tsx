@@ -494,7 +494,8 @@ function OneTapApp() {
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const [cameraStreamState, setCameraStreamState] = useState<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
 
   // Theme Management
@@ -535,6 +536,68 @@ function OneTapApp() {
 
   const uploadInputRef = useRef<HTMLInputElement>(null);
 
+  // Robustly bind MediaStream to HTMLVideoElement and ensure playback
+  const bindStreamToVideo = React.useCallback((video: HTMLVideoElement | null, stream: MediaStream | null) => {
+    if (!video || !stream) return;
+
+    // Verify video tracks
+    const tracks = stream.getVideoTracks();
+    if (tracks.length === 0) {
+      console.warn("No video tracks found in MediaStream.");
+      return;
+    }
+
+    const track = tracks[0];
+    track.enabled = true;
+
+    if (track.readyState !== "live") {
+      console.warn(`Video track state is "${track.readyState}", expected "live".`);
+    }
+
+    try {
+      if (video.srcObject !== stream) {
+        video.srcObject = stream;
+      }
+      video.muted = true;
+      video.autoplay = true;
+      video.playsInline = true;
+
+      // Handle metadata loaded
+      video.onloadedmetadata = async () => {
+        try {
+          await video.play();
+        } catch (playErr) {
+          console.warn("Camera video play on loadedmetadata failed:", playErr);
+        }
+      };
+
+      // Also call play immediately
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          console.warn("Initial video play error:", err);
+        });
+      }
+    } catch (bindErr) {
+      console.error("Failed to bind MediaStream to video element:", bindErr);
+    }
+  }, []);
+
+  // Callback ref for the video element to guarantee immediate attachment upon React DOM mount
+  const setVideoRef = React.useCallback((videoNode: HTMLVideoElement | null) => {
+    videoRef.current = videoNode;
+    if (videoNode && mediaStreamRef.current) {
+      bindStreamToVideo(videoNode, mediaStreamRef.current);
+    }
+  }, [bindStreamToVideo]);
+
+  // Effect to ensure binding whenever isCameraOpen or cameraStreamState changes
+  useEffect(() => {
+    if (isCameraOpen && videoRef.current && mediaStreamRef.current) {
+      bindStreamToVideo(videoRef.current, mediaStreamRef.current);
+    }
+  }, [isCameraOpen, cameraStreamState, bindStreamToVideo]);
+
   // Stop camera stream safely and release hardware
   function stopCameraStream() {
     if (mediaStreamRef.current) {
@@ -550,6 +613,7 @@ function OneTapApp() {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    setCameraStreamState(null);
     setIsCameraOpen(false);
     setCameraLoading(false);
     setTorchOn(false);
@@ -594,13 +658,22 @@ function OneTapApp() {
         });
       }
 
+      // Verify that at least one video track is active and live
+      const videoTracks = stream.getVideoTracks();
+      if (!videoTracks || videoTracks.length === 0) {
+        throw new Error("No active video track returned by device.");
+      }
+
+      videoTracks[0].enabled = true;
+
       mediaStreamRef.current = stream;
+      setCameraStreamState(stream);
       setIsCameraOpen(true);
       setCameraLoading(false);
 
+      // Attempt immediate binding if video element is already available
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play().catch(() => {});
+        bindStreamToVideo(videoRef.current, stream);
       }
 
       // Check for multiple cameras
@@ -624,12 +697,24 @@ function OneTapApp() {
       console.error("Camera access error:", err);
       stopCameraStream();
       setStatus("error");
-      if (err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "PermissionDeniedError")) {
-        setErrorMessage("Camera permission was denied. You can still choose an image from your gallery.");
-      } else if (err instanceof DOMException && err.name === "NotFoundError") {
-        setErrorMessage("No camera was detected on this device. Please select an image from files.");
+      if (err instanceof DOMException) {
+        if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+          setErrorMessage("Camera access was denied. Check your browser permissions or choose an image instead.");
+        } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
+          setErrorMessage("No camera was detected on this device. You can choose an image from your gallery.");
+        } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
+          setErrorMessage("Camera is already in use by another application. Please close other camera apps and try again.");
+        } else if (err.name === "OverconstrainedError") {
+          setErrorMessage("Camera does not support requested settings. You can still choose an image from your gallery.");
+        } else if (err.name === "SecurityError") {
+          setErrorMessage("Camera access is restricted in this security context. Please choose an image from your gallery.");
+        } else {
+          setErrorMessage(`Camera error (${err.name}). Please select an image from your gallery.`);
+        }
       } else {
-        setErrorMessage("Could not connect to camera. Please select an image from your gallery.");
+        setErrorMessage(
+          err instanceof Error ? err.message : "Could not connect to camera. Please select an image from your gallery."
+        );
       }
     }
   }
@@ -1292,11 +1377,19 @@ function OneTapApp() {
             <div className="relative aspect-[4/5] w-full overflow-hidden rounded-[2rem] border border-[var(--accent-emerald)] bg-black shadow-2xl flex flex-col justify-between p-4">
               {/* Live Video Element */}
               <video
-                ref={videoRef}
+                ref={setVideoRef}
                 autoPlay
                 playsInline
                 muted
-                className="absolute inset-0 h-full w-full object-cover"
+                onLoadedMetadata={(e) => {
+                  const v = e.currentTarget;
+                  v.play().catch((err) => console.warn("Video onLoadedMetadata play error:", err));
+                }}
+                onCanPlay={(e) => {
+                  const v = e.currentTarget;
+                  v.play().catch((err) => console.warn("Video onCanPlay play error:", err));
+                }}
+                className="absolute inset-0 h-full w-full object-cover z-0 pointer-events-none"
               />
 
               {/* Viewfinder Target Framing Overlay */}
