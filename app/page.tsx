@@ -443,23 +443,49 @@ function triggerEmail(email: string, subject = "Information from OneTap Reality"
   link.remove();
 }
 
+function isSafeUrl(rawUrl: string): boolean {
+  if (!rawUrl || typeof rawUrl !== "string") return false;
+  const trimmed = rawUrl.trim().toLowerCase();
+  if (
+    trimmed.startsWith("javascript:") ||
+    trimmed.startsWith("data:") ||
+    trimmed.startsWith("vbscript:") ||
+    trimmed.startsWith("file:")
+  ) {
+    return false;
+  }
+  try {
+    const parsed = new URL(rawUrl.startsWith("http://") || rawUrl.startsWith("https://") ? rawUrl : `https://${rawUrl}`);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function openMaps(location: string) {
-  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
+  if (!location || location === "Not mentioned") return;
+  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location.slice(0, 300))}`;
   window.open(mapsUrl, "_blank", "noopener,noreferrer");
 }
 
 function openDirections(location: string) {
-  const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(location)}`;
+  if (!location || location === "Not mentioned") return;
+  const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(location.slice(0, 300))}`;
   window.open(directionsUrl, "_blank", "noopener,noreferrer");
 }
 
 function openSearch(query: string) {
-  const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+  if (!query) return;
+  const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query.slice(0, 300))}`;
   window.open(searchUrl, "_blank", "noopener,noreferrer");
 }
 
 function openUrl(url: string) {
-  const target = url.startsWith("http") ? url : `https://${url}`;
+  if (!isSafeUrl(url)) {
+    console.warn("Blocked potentially unsafe URL navigation:", url);
+    return;
+  }
+  const target = url.startsWith("http://") || url.startsWith("https://") ? url : `https://${url}`;
   window.open(target, "_blank", "noopener,noreferrer");
 }
 

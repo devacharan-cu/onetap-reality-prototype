@@ -52,9 +52,7 @@ export type ServerAction = {
 };
 
 const requestSchema = z.object({
-  image: z
-    .string()
-    .startsWith("data:image/", { message: "Image must be a data:image/ URL." }),
+  image: z.string().min(1, { message: "Image payload cannot be empty." }),
 });
 
 const entityItemSchema = z.object({
@@ -261,18 +259,74 @@ function hasEmailEvidence(value?: string, evidence?: string): boolean {
   return normalize(evidence).includes(normalize(value));
 }
 
+function isSafeUrlProtocol(url?: string): boolean {
+  if (!url || typeof url !== "string") return false;
+  const trimmed = url.trim().toLowerCase();
+  return (
+    !trimmed.startsWith("javascript:") &&
+    !trimmed.startsWith("data:") &&
+    !trimmed.startsWith("vbscript:") &&
+    !trimmed.startsWith("file:")
+  );
+}
+
 function hasUrlEvidence(value?: string, evidence?: string): boolean {
   if (!value || !evidence) return false;
   if (isPlaceholder(value) || isPlaceholder(evidence)) return false;
   if (isGenericEvidence(evidence)) return false;
+  if (!isSafeUrlProtocol(value) || !isSafeUrlProtocol(evidence)) return false;
 
   const normVal = value.replace(/^https?:\/\//i, "").replace(/^www\./i, "").toLowerCase();
   const normEvi = evidence.replace(/^https?:\/\//i, "").replace(/^www\./i, "").toLowerCase();
   return normEvi.includes(normVal) || normVal.includes(normEvi);
 }
 
+// In-Memory IP Sliding Window Rate Limiter
+const analyzeRateLimitMap = new Map<string, { count: number; resetTime: number }>();
+
+function checkRateLimit(ip: string, maxRequests = 45, windowMs = 60000): boolean {
+  const now = Date.now();
+  if (analyzeRateLimitMap.size > 5000) {
+    for (const [k, v] of analyzeRateLimitMap.entries()) {
+      if (v.resetTime < now) analyzeRateLimitMap.delete(k);
+    }
+  }
+
+  const entry = analyzeRateLimitMap.get(ip);
+  if (!entry || entry.resetTime < now) {
+    analyzeRateLimitMap.set(ip, { count: 1, resetTime: now + windowMs });
+    return true;
+  }
+
+  if (entry.count >= maxRequests) {
+    return false;
+  }
+
+  entry.count++;
+  return true;
+}
+
+const ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/heic",
+  "image/heif",
+]);
+
 export async function POST(req: NextRequest) {
   try {
+    // 1. Rate Limiting Protection
+    const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "127.0.0.1";
+    if (!checkRateLimit(clientIp)) {
+      return NextResponse.json(
+        { error: "Too many requests. Please wait a moment before trying again." },
+        { status: 429 }
+      );
+    }
+
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
@@ -281,27 +335,53 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // 2. Request body & payload parsing with strict size limits
     const body = await req.json().catch(() => null);
     const parsedBody = requestSchema.safeParse(body);
 
     if (!parsedBody.success) {
       return NextResponse.json(
-        { error: "Invalid image payload. Must be a valid base64 data:image URL." },
+        { error: "Invalid image payload. Expected valid JSON with a data:image base64 string." },
         { status: 400 }
       );
     }
 
     const { image } = parsedBody.data;
-    const match = image.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+
+    // Max 10MB Base64 string limit
+    if (image.length > 10 * 1024 * 1024) {
+      return NextResponse.json(
+        { error: "Image payload exceeds maximum allowed size (10MB)." },
+        { status: 413 }
+      );
+    }
+
+    // 3. Strict Data URI & MIME Validation
+    const match = image.match(/^data:([a-zA-Z0-9+.-]+\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
     if (!match) {
       return NextResponse.json(
-        { error: "Malformed data URI. Expected data:image/<format>;base64,<data>" },
+        { error: "Malformed data URI. Expected data:<mime-type>;base64,<data>" },
         { status: 400 }
       );
     }
 
-    const mimeType = match[1];
+    const mimeType = match[1].toLowerCase();
     const base64Data = match[2];
+
+    if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+      return NextResponse.json(
+        { error: `Unsupported image type (${mimeType}). Supported formats: JPEG, PNG, WebP, GIF, HEIC.` },
+        { status: 415 }
+      );
+    }
+
+    // Base64 format sanity check
+    if (base64Data.length < 50) {
+      return NextResponse.json(
+        { error: "Image data is empty or too short." },
+        { status: 400 }
+      );
+    }
 
     const ai = new GoogleGenAI({ apiKey });
 

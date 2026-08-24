@@ -32,8 +32,33 @@ const chatHistoryItemSchema = z.object({
   text: z.string(),
 });
 
+// In-Memory IP Sliding Window Rate Limiter
+const chatRateLimitMap = new Map<string, { count: number; resetTime: number }>();
+
+function checkChatRateLimit(ip: string, maxRequests = 60, windowMs = 60000): boolean {
+  const now = Date.now();
+  if (chatRateLimitMap.size > 5000) {
+    for (const [k, v] of chatRateLimitMap.entries()) {
+      if (v.resetTime < now) chatRateLimitMap.delete(k);
+    }
+  }
+
+  const entry = chatRateLimitMap.get(ip);
+  if (!entry || entry.resetTime < now) {
+    chatRateLimitMap.set(ip, { count: 1, resetTime: now + windowMs });
+    return true;
+  }
+
+  if (entry.count >= maxRequests) {
+    return false;
+  }
+
+  entry.count++;
+  return true;
+}
+
 const chatRequestSchema = z.object({
-  message: z.string().min(1, "Question cannot be empty"),
+  message: z.string().min(1, "Question cannot be empty").max(1000, "Question is too long (max 1000 characters)"),
   history: z.array(chatHistoryItemSchema).default([]),
   context: z.string().default("general"),
   title: z.string().default("Visual Subject"),
@@ -47,6 +72,14 @@ const chatRequestSchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
+    const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "127.0.0.1";
+    if (!checkChatRateLimit(clientIp)) {
+      return NextResponse.json(
+        { error: "Too many questions. Please slow down and try again in a few seconds." },
+        { status: 429 }
+      );
+    }
+
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
@@ -59,8 +92,9 @@ export async function POST(req: NextRequest) {
     const parsedBody = chatRequestSchema.safeParse(body);
 
     if (!parsedBody.success) {
+      const msg = parsedBody.error.issues[0]?.message || "Invalid question payload.";
       return NextResponse.json(
-        { error: "Invalid question payload." },
+        { error: msg },
         { status: 400 }
       );
     }
