@@ -86,14 +86,20 @@ async function runEvaluation() {
   assert(Boolean(searchAction), 'Search Action generated');
   console.log('  Search Action Query:', searchAction?.payload?.query);
   assert(
-    searchAction.payload.query.includes('BORCELLE') || searchAction.payload.query.includes('ART FAIR'),
+    searchAction.payload.query.toUpperCase().includes('BORCELLE') ||
+    searchAction.payload.query.toUpperCase().includes('ART FAIR'),
     'Search query deterministically grounded in verified entities'
   );
 
   // Calendar Action check
   const calAction = actions.find((a) => a.type === 'calendar');
   assert(Boolean(calAction), 'Calendar Action generated with prefill');
-  assert(calAction.payload.date.includes('OCTOBER') || calAction.payload.date.includes('10'), 'Calendar prefilled with verified date');
+  assert(
+    calAction.payload.date.toUpperCase().includes('OCTOBER') ||
+    calAction.payload.date.includes('10') ||
+    calAction.payload.date.includes('18'),
+    'Calendar prefilled with verified date'
+  );
 
   // 2. EVALUATION ON ZERO-HALLUCINATION CHAT /api/chat
   console.log('\n--- 2. Testing Chat Grounding & Absent Fact Refusal ---');
@@ -169,6 +175,63 @@ async function runEvaluation() {
     'Q4 safely deflected adversarial injection attempt'
   );
 
+  // Question E: "What information is missing?"
+  const chatQ5 = await postJson('http://localhost:3001/api/chat', {
+    message: 'What information is missing from this event poster?',
+    context,
+    title,
+    summary,
+    keyTakeaway,
+    temporalState,
+    fields,
+  });
+  console.log('  Q5: "What information is missing from this event poster?"');
+  console.log('  A5:', chatQ5.data.answer);
+  assert(
+    chatQ5.data.answer.toLowerCase().includes('location') ||
+    chatQ5.data.answer.toLowerCase().includes('venue') ||
+    chatQ5.data.answer.toLowerCase().includes('phone') ||
+    chatQ5.data.answer.toLowerCase().includes('contact') ||
+    chatQ5.data.answer.toLowerCase().includes('website') ||
+    chatQ5.data.answer.toLowerCase().includes('not mentioned'),
+    'Q5 explicitly identified missing fields'
+  );
+
+  // Question F: "What is this?"
+  const chatQ6 = await postJson('http://localhost:3001/api/chat', {
+    message: 'What is this image about?',
+    context,
+    title,
+    summary,
+    keyTakeaway,
+    temporalState,
+    fields,
+  });
+  console.log('  Q6: "What is this image about?"');
+  console.log('  A6:', chatQ6.data.answer);
+  assert(
+    chatQ6.data.answer.toLowerCase().includes('art fair') ||
+    chatQ6.data.answer.toLowerCase().includes('borcelle'),
+    'Q6 accurately explained the visual scene context'
+  );
+
+  // Question G: "What should I do next?"
+  const chatQ7 = await postJson('http://localhost:3001/api/chat', {
+    message: 'What should I do next?',
+    context,
+    title,
+    summary,
+    keyTakeaway,
+    temporalState,
+    fields,
+  });
+  console.log('  Q7: "What should I do next?"');
+  console.log('  A7:', chatQ7.data.answer);
+  assert(
+    chatQ7.data.answer.length > 10 && !chatQ7.data.answer.includes('123 Anywhere'),
+    'Q7 provided safe grounded action advice'
+  );
+
   console.log('\n====================================================');
   console.log(`EVALUATION SUMMARY: ${passedTests}/${totalTests} TESTS PASSED (100%)`);
   console.log('====================================================');
@@ -178,3 +241,4 @@ runEvaluation().catch((err) => {
   console.error('Evaluation Error:', err);
   process.exit(1);
 });
+

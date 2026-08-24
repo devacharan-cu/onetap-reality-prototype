@@ -1790,6 +1790,11 @@ function OneTapApp() {
                               <p className="text-sm font-semibold text-[var(--text-primary)] break-words">
                                 {field.value}
                               </p>
+                              {field.evidence && field.evidence !== field.value && field.status === "verified" && (
+                                <p className="mt-1 text-[10px] text-[var(--text-muted)] italic">
+                                  Evidence snippet: &ldquo;{field.evidence}&rdquo;
+                                </p>
+                              )}
                               {field.sourceCitation && (
                                 <p className="mt-1 text-[10px] text-sky-600 dark:text-sky-400 font-mono">
                                   Source: {field.sourceCitation}
@@ -1932,10 +1937,11 @@ function OneTapApp() {
                     {/* Quick Suggestion Chips */}
                     <div className="flex flex-wrap gap-1.5 mb-3">
                       {[
-                        "What time does this start?",
-                        "Where is this located?",
-                        "Translate this to Hindi",
-                        "Translate this to Spanish",
+                        "What is this?",
+                        "What information is missing?",
+                        "When is it?",
+                        "Where is it?",
+                        "Translate to Hindi",
                         "Summarize key points",
                       ].map((chip) => (
                         <button
