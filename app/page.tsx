@@ -517,6 +517,7 @@ function OneTapApp() {
 
   // Scan History
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const historyJson = useSyncExternalStore(subscribeStorage, getHistorySnapshot, getServerHistorySnapshot);
   const historyItems: HistoryItem[] = useMemo(() => {
     try {
@@ -893,8 +894,18 @@ function OneTapApp() {
 
   function saveScanToHistory(newAnalysis: Analysis, thumbDataUrl?: string) {
     try {
+      const current: HistoryItem[] = JSON.parse(localStorage.getItem("onetap_scan_history") || "[]");
+      // Avoid duplicate consecutive scans of the same subject
+      if (
+        current.length > 0 &&
+        current[0].title === newAnalysis.title &&
+        current[0].summary === newAnalysis.summary
+      ) {
+        return;
+      }
+
       const newItem: HistoryItem = {
-        id: `scan-${Date.now()}`,
+        id: `scan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         timestamp: Date.now(),
         context: newAnalysis.context,
         title: newAnalysis.title,
@@ -902,8 +913,8 @@ function OneTapApp() {
         thumbnail: thumbDataUrl,
         analysis: newAnalysis,
       };
-      const current = JSON.parse(localStorage.getItem("onetap_scan_history") || "[]");
-      const updated = [newItem, ...current.slice(0, 9)];
+
+      const updated = [newItem, ...current.slice(0, 19)];
       localStorage.setItem("onetap_scan_history", JSON.stringify(updated));
       window.dispatchEvent(new Event("storage"));
     } catch {
@@ -911,13 +922,29 @@ function OneTapApp() {
     }
   }
 
-  function clearHistory() {
+  function deleteHistoryItem(id: string, e?: React.MouseEvent) {
+    if (e) e.stopPropagation();
+    try {
+      if (typeof window !== "undefined") {
+        const current: HistoryItem[] = JSON.parse(localStorage.getItem("onetap_scan_history") || "[]");
+        const updated = current.filter((item) => item.id !== id);
+        localStorage.setItem("onetap_scan_history", JSON.stringify(updated));
+        window.dispatchEvent(new Event("storage"));
+      }
+      setFeedbackMessage("✓ Scan deleted from history.");
+    } catch {
+      // Ignore
+    }
+  }
+
+  function executeClearAllHistory() {
     try {
       if (typeof window !== "undefined") {
         localStorage.removeItem("onetap_scan_history");
         window.dispatchEvent(new Event("storage"));
       }
-      setFeedbackMessage("✓ Scan history cleared.");
+      setConfirmClearOpen(false);
+      setFeedbackMessage("✓ All scan history cleared.");
     } catch {
       // Ignore
     }
@@ -928,6 +955,7 @@ function OneTapApp() {
     setImage(item.thumbnail || null);
     setStatus("success");
     setHistoryOpen(false);
+    setConfirmClearOpen(false);
     setChatMessages([]);
     setFeedbackMessage(`✓ Loaded "${item.title}"`);
   }
@@ -1922,57 +1950,96 @@ function OneTapApp() {
               <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
                 {historyItems.length > 0 ? (
                   historyItems.map((item) => (
-                    <button
+                    <div
                       key={item.id}
-                      type="button"
                       onClick={() => loadHistoryItem(item)}
-                      className="w-full text-left rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card-subtle)] p-3 hover:bg-[var(--bg-card-hover)] hover:border-[var(--border-medium)] transition group"
+                      className="w-full text-left rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card-subtle)] p-3.5 hover:bg-[var(--bg-card-hover)] hover:border-[var(--border-medium)] transition group cursor-pointer relative"
                     >
-                      <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center justify-between mb-1.5">
                         <span className="text-[9px] uppercase font-semibold text-[var(--text-muted)] bg-[var(--bg-pill)] px-2 py-0.5 rounded-full">
                           {item.context.replace(/_/g, " ")}
                         </span>
-                        <span className="text-[10px] text-[var(--text-muted)]">
-                          {new Date(item.timestamp).toLocaleDateString([], {
-                            month: "short",
-                            day: "numeric",
-                          })}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-[var(--text-muted)]">
+                            {new Date(item.timestamp).toLocaleDateString([], {
+                              month: "short",
+                              day: "numeric",
+                            })}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => deleteHistoryItem(item.id, e)}
+                            className="p-1 rounded-lg text-[var(--text-muted)] hover:text-red-500 hover:bg-red-500/10 transition active:scale-90"
+                            title="Delete this scan"
+                            aria-label={`Delete ${item.title}`}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
                       </div>
-                      <p className="text-xs font-semibold text-[var(--text-primary)] group-hover:text-[var(--accent-emerald)] transition">
+                      <p className="text-xs font-semibold text-[var(--text-primary)] group-hover:text-[var(--accent-emerald)] transition pr-4">
                         {item.title}
                       </p>
                       <p className="text-[11px] text-[var(--text-secondary)] line-clamp-1 mt-0.5">
                         {item.summary}
                       </p>
-                    </button>
+                    </div>
                   ))
                 ) : (
-                  <div className="text-center py-8 text-[var(--text-muted)] text-xs">
-                    <p>No recent scans saved yet.</p>
-                    <p className="mt-1 text-[11px] opacity-70">
-                      Scans are stored securely on this device.
+                  <div className="text-center py-10 px-4 text-xs">
+                    <div className="mx-auto w-12 h-12 rounded-full bg-[var(--bg-pill)] border border-[var(--border-subtle)] flex items-center justify-center text-[var(--text-muted)] mb-3">
+                      <History size={20} />
+                    </div>
+                    <p className="font-semibold text-sm text-[var(--text-primary)]">No scans yet</p>
+                    <p className="mt-1 text-[11px] text-[var(--text-secondary)] max-w-[200px] mx-auto leading-relaxed">
+                      Your analyzed moments and verified details will appear here.
                     </p>
                   </div>
                 )}
               </div>
 
               {historyItems.length > 0 && (
-                <div className="pt-4 mt-2 border-t border-[var(--border-subtle)] flex gap-2">
-                  <button
-                    type="button"
-                    onClick={clearHistory}
-                    className="flex-1 rounded-xl border border-red-500/20 bg-red-500/10 py-2 text-xs font-semibold text-red-600 dark:text-red-300 hover:bg-red-500/20 transition flex items-center justify-center gap-1.5"
-                  >
-                    <Trash2 size={13} /> Clear History
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHistoryOpen(false)}
-                    className="flex-1 rounded-xl bg-[var(--bg-pill)] py-2 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition"
-                  >
-                    Close
-                  </button>
+                <div className="pt-4 mt-2 border-t border-[var(--border-subtle)]">
+                  {confirmClearOpen ? (
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-center font-medium text-red-500">
+                        Clear all {historyItems.length} scan{historyItems.length === 1 ? "" : "s"}?
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmClearOpen(false)}
+                          className="flex-1 rounded-xl bg-[var(--bg-pill)] py-2 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={executeClearAllHistory}
+                          className="flex-1 rounded-xl bg-red-600 hover:bg-red-500 text-white py-2 text-xs font-semibold transition"
+                        >
+                          Confirm Clear
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setConfirmClearOpen(true)}
+                        className="flex-1 rounded-xl border border-red-500/20 bg-red-500/10 py-2 text-xs font-semibold text-red-600 dark:text-red-300 hover:bg-red-500/20 transition flex items-center justify-center gap-1.5"
+                      >
+                        <Trash2 size={13} /> Clear All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHistoryOpen(false)}
+                        className="flex-1 rounded-xl bg-[var(--bg-pill)] py-2 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
