@@ -51,6 +51,7 @@ import {
   Layers,
   LucideIcon,
 } from "lucide-react";
+import { OneTapLogo, OneTapMark } from "@/components/OneTapLogo";
 
 export type FieldStatus = "verified" | "web_verified" | "uncertain" | "not_mentioned" | "unverified";
 export type FieldSource = "image" | "web" | "none" | "inference";
@@ -1506,16 +1507,21 @@ function OneTapApp() {
       <div className="w-full max-w-md flex min-h-screen flex-col px-5 pb-8 pt-6">
         {/* Top Header */}
         <header className="flex items-center justify-between pb-4 border-b border-[var(--border-subtle)]">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="inline-block w-2 h-2 rounded-full bg-[var(--accent-emerald)] animate-pulse" />
-              <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-[var(--text-muted)]">
-                iQOO Vision AI
-              </p>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border-medium)] bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm shrink-0">
+              <OneTapMark size={20} className="text-[var(--text-primary)]" />
             </div>
-            <h1 className="mt-0.5 text-lg font-bold tracking-tight bg-gradient-to-r from-[var(--text-primary)] via-[var(--text-primary)] to-[var(--text-secondary)] bg-clip-text text-transparent">
-              OneTap Reality
-            </h1>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--accent-emerald)] animate-pulse" />
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--text-muted)]">
+                  iQOO Vision AI
+                </p>
+              </div>
+              <h1 className="mt-0.5 text-base font-bold tracking-tight text-[var(--text-primary)]">
+                OneTap <span className="text-[var(--text-secondary)] font-medium">Reality</span>
+              </h1>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -1715,7 +1721,12 @@ function OneTapApp() {
           {/* IDLE VIEW (When Camera is not active) */}
           {!isCameraOpen && status === "idle" && (
             <div className="flex flex-col items-center text-center">
-              <div className="my-8">
+              <div className="my-6 flex flex-col items-center">
+                {/* Official OneTap Mark Badge */}
+                <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--border-medium)] bg-[var(--bg-card)] text-[var(--text-primary)] shadow-md">
+                  <OneTapMark size={32} className="text-[var(--text-primary)]" />
+                </div>
+
                 <p className="text-4xl font-extrabold leading-[1.05] tracking-[-0.04em] text-[var(--text-primary)]">
                   SEE IT.
                   <br />
@@ -1827,8 +1838,8 @@ function OneTapApp() {
                 {status === "loading" && (
                   <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md px-6 text-center text-white">
                     <div className="relative flex items-center justify-center">
-                      <div className="h-14 w-14 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-                      <Sparkles className="absolute w-5 h-5 text-white animate-pulse" />
+                      <div className="h-16 w-16 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                      <OneTapMark size={24} className="absolute text-white animate-pulse" />
                     </div>
 
                     <p className="mt-5 text-sm font-semibold tracking-tight text-white">
@@ -2145,9 +2156,16 @@ function OneTapApp() {
                                 : "bg-[var(--bg-card-subtle)] text-[var(--text-secondary)] mr-6 border border-[var(--border-subtle)]"
                             }`}
                           >
-                            <p className="font-semibold text-[10px] text-[var(--text-muted)] mb-0.5">
-                              {msg.sender === "user" ? "You" : "OneTap Assistant"}
-                            </p>
+                            <div className="flex items-center gap-1.5 font-semibold text-[10px] text-[var(--text-muted)] mb-0.5">
+                              {msg.sender === "user" ? (
+                                <span>You</span>
+                              ) : (
+                                <>
+                                  <OneTapMark size={11} className="text-[var(--text-secondary)]" />
+                                  <span>OneTap Assistant</span>
+                                </>
+                              )}
+                            </div>
                             <p className="leading-relaxed">{msg.text}</p>
                           </div>
                         ))}
@@ -2260,8 +2278,10 @@ function OneTapApp() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-bg)] p-4 backdrop-blur-md">
             <div className="w-full max-w-sm rounded-[2rem] border border-[var(--border-medium)] bg-[var(--modal-bg)] p-6 shadow-2xl max-h-[80vh] flex flex-col text-[var(--text-primary)]">
               <div className="flex items-center justify-between mb-4 pb-3 border-b border-[var(--border-subtle)]">
-                <div className="flex items-center gap-2">
-                  <History size={18} className="text-[var(--accent-emerald)]" />
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-pill)] text-[var(--text-primary)]">
+                    <OneTapMark size={14} />
+                  </div>
                   <h3 className="text-base font-bold">Recent Scans</h3>
                 </div>
                 <button
@@ -2453,7 +2473,8 @@ function OneTapApp() {
         )}
 
         {/* Footer */}
-        <footer className="pt-4 text-center border-t border-[var(--border-subtle)]">
+        <footer className="pt-6 pb-2 text-center border-t border-[var(--border-subtle)] flex flex-col items-center gap-2">
+          <OneTapLogo variant="horizontal" className="h-5 text-[var(--text-muted)] opacity-60 hover:opacity-100 transition" />
           <p className="text-[10px] uppercase tracking-[0.25em] text-[var(--text-muted)]">
             See → Understand → Verify → Act
           </p>
