@@ -1,5 +1,0 @@
-#!/usr/bin/env sh
-
-# Implementation of gradle wrapper
-DIR=$(cd "$(dirname "$0")" && pwd)
-exec gradle "$@"
