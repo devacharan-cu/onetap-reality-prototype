@@ -1507,8 +1507,14 @@ function OneTapApp() {
       <div className="w-full max-w-md flex min-h-screen flex-col px-5 pb-8 pt-6">
         {/* Top Header */}
         <header className="flex items-center justify-between pb-4 border-b border-[var(--border-subtle)]">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border-medium)] bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm shrink-0">
+          <button
+            type="button"
+            onClick={reset}
+            className="group flex items-center gap-3 text-left transition hover:opacity-95 active:scale-[0.98] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-emerald)] rounded-xl"
+            title="Return to OneTap Reality Home"
+            aria-label="OneTap Reality Home"
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border-medium)] bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm shrink-0 group-hover:border-[var(--accent-emerald)] group-hover:bg-[var(--bg-card-hover)] transition">
               <OneTapMark size={20} className="text-[var(--text-primary)]" />
             </div>
             <div>
@@ -1522,7 +1528,7 @@ function OneTapApp() {
                 OneTap <span className="text-[var(--text-secondary)] font-medium">Reality</span>
               </h1>
             </div>
-          </div>
+          </button>
 
           <div className="flex items-center gap-2">
             {/* Theme Toggle Button */}
